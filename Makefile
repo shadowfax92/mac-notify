@@ -10,8 +10,9 @@ build:
 
 install: build
 	@# Create .app bundle for daemon (required for macOS notifications)
-	@mkdir -p $(APP_DIR)/Contents/MacOS
+	@mkdir -p $(APP_DIR)/Contents/MacOS $(APP_DIR)/Contents/Resources
 	cp $(BINARY) $(APP_BIN)
+	cp assets/icon.icns $(APP_DIR)/Contents/Resources/icon.icns
 	codesign --force --sign - $(APP_BIN)
 	@printf '<?xml version="1.0" encoding="UTF-8"?>\n\
 	<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"\n\
@@ -24,6 +25,8 @@ install: build
 	    <string>mac-notify</string>\n\
 	    <key>CFBundleExecutable</key>\n\
 	    <string>mac-notify</string>\n\
+	    <key>CFBundleIconFile</key>\n\
+	    <string>icon</string>\n\
 	    <key>LSUIElement</key>\n\
 	    <true/>\n\
 	</dict>\n\
