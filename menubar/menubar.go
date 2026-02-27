@@ -1,11 +1,19 @@
 package menubar
 
+/*
+#cgo CFLAGS: -x objective-c
+#cgo LDFLAGS: -framework UserNotifications
+
+#include <stdlib.h>
+#include "notify_darwin.h"
+*/
+import "C"
 import (
 	"fmt"
-	"os/exec"
 	"slices"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/caseymrm/menuet"
 	"github.com/nickhudkins/mac-notify/config"
@@ -42,7 +50,6 @@ func handleSend(req ipc.Request) ipc.Response {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// If ID provided, upsert (replace existing message with same ID)
 	if req.ID != "" {
 		for i, m := range messages {
 			if m.ID == req.ID {
@@ -50,7 +57,7 @@ func handleSend(req ipc.Request) ipc.Response {
 				messages[i].Source = req.Source
 				messages[i].Time = time.Now()
 				updateTitle()
-				sendSystemNotification(req.Message, req.Source)
+				sendSystemNotification(req.Message, req.Source, req.ID)
 				return ipc.Response{OK: true}
 			}
 		}
@@ -69,7 +76,7 @@ func handleSend(req ipc.Request) ipc.Response {
 		Time:   time.Now(),
 	})
 	updateTitle()
-	sendSystemNotification(req.Message, req.Source)
+	sendSystemNotification(req.Message, req.Source, id)
 	return ipc.Response{OK: true}
 }
 
@@ -110,7 +117,7 @@ func handleRemove(req ipc.Request) ipc.Response {
 	return ipc.Response{OK: true}
 }
 
-func sendSystemNotification(msg, source string) {
+func sendSystemNotification(msg, source, id string) {
 	if cfg == nil || !cfg.SystemNotifications {
 		return
 	}
@@ -118,11 +125,19 @@ func sendSystemNotification(msg, source string) {
 	if source != "" {
 		title = source
 	}
-	script := fmt.Sprintf(`display notification %q with title %q`, msg, title)
-	exec.Command("osascript", "-e", script).Start()
+	cTitle := C.CString(title)
+	cBody := C.CString(msg)
+	cID := C.CString(id)
+	defer C.free(unsafe.Pointer(cTitle))
+	defer C.free(unsafe.Pointer(cBody))
+	defer C.free(unsafe.Pointer(cID))
+	C.sendDarwinNotification(cTitle, cBody, cID)
 }
 
-// updateTitle sets the menu bar title. Must be called with mu held.
+func RequestAuth() {
+	C.requestNotificationAuth()
+}
+
 func updateTitle() {
 	n := len(messages)
 	if n == 0 {
