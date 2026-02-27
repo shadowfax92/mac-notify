@@ -2,11 +2,13 @@ package menubar
 
 import (
 	"fmt"
+	"os/exec"
 	"slices"
 	"sync"
 	"time"
 
 	"github.com/caseymrm/menuet"
+	"github.com/nickhudkins/mac-notify/config"
 	"github.com/nickhudkins/mac-notify/ipc"
 )
 
@@ -14,6 +16,7 @@ var (
 	mu       sync.RWMutex
 	messages []ipc.Message
 	nextID   int
+	cfg      *config.Config
 )
 
 func HandleRequest(req ipc.Request) ipc.Response {
@@ -47,6 +50,7 @@ func handleSend(req ipc.Request) ipc.Response {
 				messages[i].Source = req.Source
 				messages[i].Time = time.Now()
 				updateTitle()
+				sendSystemNotification(req.Message, req.Source)
 				return ipc.Response{OK: true}
 			}
 		}
@@ -65,6 +69,7 @@ func handleSend(req ipc.Request) ipc.Response {
 		Time:   time.Now(),
 	})
 	updateTitle()
+	sendSystemNotification(req.Message, req.Source)
 	return ipc.Response{OK: true}
 }
 
@@ -103,6 +108,18 @@ func handleRemove(req ipc.Request) ipc.Response {
 	messages = slices.Delete(messages, idx, idx+1)
 	updateTitle()
 	return ipc.Response{OK: true}
+}
+
+func sendSystemNotification(msg, source string) {
+	if cfg == nil || !cfg.SystemNotifications {
+		return
+	}
+	title := "mac-notify"
+	if source != "" {
+		title = source
+	}
+	script := fmt.Sprintf(`display notification %q with title %q`, msg, title)
+	exec.Command("osascript", "-e", script).Start()
 }
 
 // updateTitle sets the menu bar title. Must be called with mu held.
@@ -166,7 +183,8 @@ func menuItems() []menuet.MenuItem {
 	return items
 }
 
-func Run() {
+func Run(c *config.Config) {
+	cfg = c
 	app := menuet.App()
 	app.SetMenuState(&menuet.MenuState{Title: "🔔"})
 	app.Children = menuItems

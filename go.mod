@@ -5,6 +5,7 @@ go 1.25.7
 require (
 	github.com/caseymrm/menuet v1.0.3
 	github.com/spf13/cobra v1.10.2
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
