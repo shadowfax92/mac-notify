@@ -134,10 +134,6 @@ func sendSystemNotification(msg, source, id string) {
 	C.sendDarwinNotification(cTitle, cBody, cID)
 }
 
-func RequestAuth() {
-	C.requestNotificationAuth()
-}
-
 func updateTitle() {
 	n := len(messages)
 	if n == 0 {
@@ -200,6 +196,10 @@ func menuItems() []menuet.MenuItem {
 
 func Run(c *config.Config) {
 	cfg = c
+	if cfg.SystemNotifications {
+		C.setupNotificationDelegate()
+		C.requestNotificationAuth()
+	}
 	app := menuet.App()
 	app.SetMenuState(&menuet.MenuState{Title: "🔔"})
 	app.Children = menuItems

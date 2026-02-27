@@ -1,9 +1,32 @@
 #import <UserNotifications/UserNotifications.h>
+#import <Foundation/Foundation.h>
+
+@interface NotifyDelegate : NSObject <UNUserNotificationCenterDelegate>
+@end
+
+@implementation NotifyDelegate
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+       willPresentNotification:(UNNotification *)notification
+         withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
+    completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionSound);
+}
+@end
+
+static NotifyDelegate *_delegate = nil;
+
+void setupNotificationDelegate(void) {
+    _delegate = [[NotifyDelegate alloc] init];
+    [[UNUserNotificationCenter currentNotificationCenter] setDelegate:_delegate];
+}
 
 void requestNotificationAuth(void) {
     UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
-    [center requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound)
-                         completionHandler:^(BOOL granted, NSError *error) {}];
+    [center requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge)
+                         completionHandler:^(BOOL granted, NSError *error) {
+        if (error) {
+            NSLog(@"mac-notify: auth error: %@", error);
+        }
+    }];
 }
 
 void sendDarwinNotification(const char *title, const char *body, const char *identifier) {
@@ -18,5 +41,9 @@ void sendDarwinNotification(const char *title, const char *body, const char *ide
                                                                           trigger:nil];
     [[UNUserNotificationCenter currentNotificationCenter]
         addNotificationRequest:request
-         withCompletionHandler:nil];
+         withCompletionHandler:^(NSError *error) {
+            if (error) {
+                NSLog(@"mac-notify: notification error: %@", error);
+            }
+        }];
 }
