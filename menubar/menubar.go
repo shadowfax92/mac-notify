@@ -21,10 +21,12 @@ import (
 )
 
 var (
-	mu       sync.RWMutex
-	messages []ipc.Message
-	nextID   int
-	cfg      *config.Config
+	mu         sync.RWMutex
+	messages   []ipc.Message
+	nextID     int
+	cfg        *config.Config
+	flashTimer *time.Timer
+	flashMu    sync.Mutex
 )
 
 func HandleRequest(req ipc.Request) ipc.Response {
@@ -58,6 +60,8 @@ func handleSend(req ipc.Request) ipc.Response {
 				messages[i].Time = time.Now()
 				updateTitle()
 				sendSystemNotification(req.Message, req.Source, req.ID)
+				showOverlay(req.Message, req.Source)
+				flashTitle(req.Message, req.Source)
 				return ipc.Response{OK: true}
 			}
 		}
@@ -77,6 +81,8 @@ func handleSend(req ipc.Request) ipc.Response {
 	})
 	updateTitle()
 	sendSystemNotification(req.Message, req.Source, id)
+	showOverlay(req.Message, req.Source)
+	flashTitle(req.Message, req.Source)
 	return ipc.Response{OK: true}
 }
 
@@ -132,6 +138,59 @@ func sendSystemNotification(msg, source, id string) {
 	defer C.free(unsafe.Pointer(cBody))
 	defer C.free(unsafe.Pointer(cID))
 	C.sendDarwinNotification(cTitle, cBody, cID)
+}
+
+func showOverlay(msg, source string) {
+	if cfg == nil || !cfg.OverlayNotifications {
+		return
+	}
+	title := "mac-notify"
+	if source != "" {
+		title = source
+	}
+	cTitle := C.CString(title)
+	cBody := C.CString(msg)
+	defer C.free(unsafe.Pointer(cTitle))
+	defer C.free(unsafe.Pointer(cBody))
+	C.showOverlayNotification(cTitle, cBody)
+}
+
+func flashTitle(msg, source string) {
+	if cfg == nil || !cfg.MenuFlash {
+		return
+	}
+	text := msg
+	if source != "" {
+		text = fmt.Sprintf("[%s] %s", source, msg)
+	}
+	runes := []rune(text)
+	if len(runes) > 30 {
+		text = string(runes[:27]) + "..."
+	}
+
+	flashMu.Lock()
+	if flashTimer != nil {
+		flashTimer.Stop()
+	}
+	menuet.App().SetMenuState(&menuet.MenuState{
+		Title: "🔔 " + text,
+	})
+	flashTimer = time.AfterFunc(2*time.Second, func() {
+		flashMu.Lock()
+		flashTimer = nil
+		flashMu.Unlock()
+		mu.RLock()
+		n := len(messages)
+		mu.RUnlock()
+		if n == 0 {
+			menuet.App().SetMenuState(&menuet.MenuState{Title: "🔔"})
+		} else {
+			menuet.App().SetMenuState(&menuet.MenuState{
+				Title: fmt.Sprintf("🔔 %d", n),
+			})
+		}
+	})
+	flashMu.Unlock()
 }
 
 func updateTitle() {

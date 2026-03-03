@@ -1,5 +1,8 @@
 #import <UserNotifications/UserNotifications.h>
 #import <Foundation/Foundation.h>
+#import <AppKit/AppKit.h>
+
+// --- Notification Delegate ---
 
 @interface NotifyDelegate : NSObject <UNUserNotificationCenterDelegate>
 @end
@@ -46,4 +49,126 @@ void sendDarwinNotification(const char *title, const char *body, const char *ide
                 NSLog(@"mac-notify: notification error: %@", error);
             }
         }];
+}
+
+// --- Overlay Window ---
+
+static NSPanel *_overlayPanel = nil;
+static int _overlayGeneration = 0;
+
+static void pulseGlow(CALayer *layer, int generation) {
+    if (_overlayPanel == nil || _overlayGeneration != generation) return;
+
+    BOOL expand = (layer.shadowRadius < 15);
+    CGFloat targetRadius = expand ? 20 : 8;
+    float targetOpacity = expand ? 0.9 : 0.4;
+
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+        ctx.duration = 1.0;
+        ctx.allowsImplicitAnimation = YES;
+        layer.shadowRadius = targetRadius;
+        layer.shadowOpacity = targetOpacity;
+    } completionHandler:^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            pulseGlow(layer, generation);
+        });
+    }];
+}
+
+void showOverlayNotification(const char *title, const char *body) {
+    char *titleCopy = strdup(title);
+    char *bodyCopy = strdup(body);
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (_overlayPanel) {
+            [_overlayPanel close];
+            [_overlayPanel release];
+            _overlayPanel = nil;
+        }
+        _overlayGeneration++;
+        int gen = _overlayGeneration;
+
+        NSString *titleStr = [NSString stringWithUTF8String:titleCopy];
+        NSString *bodyStr = [NSString stringWithUTF8String:bodyCopy];
+        free(titleCopy);
+        free(bodyCopy);
+
+        CGFloat width = 340;
+        CGFloat height = 64;
+        NSScreen *screen = [NSScreen mainScreen];
+        NSRect visibleFrame = screen.visibleFrame;
+        CGFloat x = NSMidX(visibleFrame) - width / 2;
+        CGFloat y = NSMaxY(visibleFrame) - height - 8;
+
+        NSRect frame = NSMakeRect(x, y, width, height);
+        _overlayPanel = [[NSPanel alloc]
+            initWithContentRect:frame
+            styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
+            backing:NSBackingStoreBuffered
+            defer:NO];
+
+        _overlayPanel.level = NSStatusWindowLevel + 1;
+        _overlayPanel.opaque = NO;
+        _overlayPanel.backgroundColor = [NSColor clearColor];
+        _overlayPanel.hasShadow = NO;
+        _overlayPanel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                           NSWindowCollectionBehaviorStationary |
+                                           NSWindowCollectionBehaviorFullScreenAuxiliary;
+        _overlayPanel.ignoresMouseEvents = YES;
+        _overlayPanel.hidesOnDeactivate = NO;
+
+        NSView *contentView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, width, height)];
+        contentView.wantsLayer = YES;
+        contentView.layer.cornerRadius = 12;
+        contentView.layer.backgroundColor = [[NSColor colorWithWhite:0.08 alpha:0.95] CGColor];
+        contentView.layer.borderColor = [[NSColor colorWithRed:0 green:0.85 blue:1.0 alpha:0.6] CGColor];
+        contentView.layer.borderWidth = 1.5;
+        contentView.layer.shadowColor = [[NSColor colorWithRed:0 green:0.85 blue:1.0 alpha:1.0] CGColor];
+        contentView.layer.shadowRadius = 8;
+        contentView.layer.shadowOpacity = 0.4;
+        contentView.layer.shadowOffset = CGSizeMake(0, 0);
+
+        NSTextField *titleLabel = [NSTextField labelWithString:titleStr];
+        titleLabel.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
+        titleLabel.textColor = [NSColor colorWithWhite:0.55 alpha:1.0];
+        titleLabel.frame = NSMakeRect(14, height - 26, width - 28, 16);
+        titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+        [contentView addSubview:titleLabel];
+
+        NSTextField *bodyLabel = [NSTextField labelWithString:bodyStr];
+        bodyLabel.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
+        bodyLabel.textColor = [NSColor whiteColor];
+        bodyLabel.frame = NSMakeRect(14, 8, width - 28, 22);
+        bodyLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+        [contentView addSubview:bodyLabel];
+
+        _overlayPanel.contentView = contentView;
+
+        // Fade in
+        _overlayPanel.alphaValue = 0;
+        [_overlayPanel orderFront:nil];
+        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+            ctx.duration = 0.3;
+            _overlayPanel.animator.alphaValue = 1.0;
+        }];
+
+        // Start glow pulse
+        pulseGlow(contentView.layer, gen);
+
+        // Auto-dismiss after 5 seconds
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (_overlayGeneration == gen && _overlayPanel) {
+                [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+                    ctx.duration = 0.5;
+                    _overlayPanel.animator.alphaValue = 0;
+                } completionHandler:^{
+                    if (_overlayGeneration == gen && _overlayPanel) {
+                        [_overlayPanel close];
+                        [_overlayPanel release];
+                        _overlayPanel = nil;
+                    }
+                }];
+            }
+        });
+    });
 }

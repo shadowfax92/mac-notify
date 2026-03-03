@@ -9,12 +9,16 @@ import (
 )
 
 type Config struct {
-	SystemNotifications bool `yaml:"system_notifications"`
+	SystemNotifications  bool `yaml:"system_notifications"`
+	OverlayNotifications bool `yaml:"overlay_notifications"`
+	MenuFlash            bool `yaml:"menu_flash"`
 }
 
 func Default() *Config {
 	return &Config{
-		SystemNotifications: true,
+		SystemNotifications:  true,
+		OverlayNotifications: true,
+		MenuFlash:            true,
 	}
 }
 
