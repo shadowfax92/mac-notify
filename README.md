@@ -15,6 +15,8 @@ A lightweight CLI that puts notification messages in your macOS menu bar. Messag
 - **Click to dismiss** — click any message in the dropdown to remove it
 - **Upsert by ID** — update an existing message in-place with `--id`
 - **Source tagging** — `--source ci` to know where it came from
+- **Overlay popup** — floating panel with pulsing cyan glow, auto-dismisses after 5s
+- **Menu bar flash** — message text appears in the menu bar for 2s on each send
 - **Native notifications** — macOS banner alerts with sound (configurable)
 - **Daemon auto-start** — installs as a launchd service, runs on login
 
@@ -85,6 +87,14 @@ Click to open the dropdown:
 
 Click a message to dismiss it. Click **Clear All** to reset.
 
+## Overlay Popup
+
+Each `send` shows a floating dark panel just below the menu bar with a pulsing cyan glow border. It fades in, glows for 5 seconds, and fades out. New messages replace the current overlay.
+
+## Menu Bar Flash
+
+On each `send`, the menu bar temporarily shows the message text (e.g. `🔔 [ci] build passed`) for 2 seconds, then reverts to the badge count.
+
 ## Native Notifications
 
 When enabled, each `send` also triggers a macOS notification banner with sound. The app appears in **System Settings → Notifications** as `mac-notify` with its own icon.
@@ -95,17 +105,22 @@ When enabled, each `send` also triggers a macOS notification banner with sound. 
 
 ```yaml
 system_notifications: true
+overlay_notifications: true
+menu_flash: true
 ```
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `system_notifications` | `true` | Show native macOS notification banners |
+| `overlay_notifications` | `true` | Show floating overlay popup with glow |
+| `menu_flash` | `true` | Flash message text in menu bar for 2s |
 
 ## Architecture
 
 ```
 mac-notify send "msg"  ──→  Unix socket IPC  ──→  daemon (menu bar app)
                             ~/.mac-notify.sock       ├─ menuet menu bar
+                                                     ├─ overlay popup (NSPanel + glow)
                                                      └─ UNUserNotificationCenter
 ```
 
