@@ -89,6 +89,10 @@ Click a message to dismiss it. Click **Clear All** to reset.
 
 ## Overlay Popup
 
+<p align="center">
+  <img src="assets/overlay.png" alt="overlay notification" width="400" />
+</p>
+
 Each `send` shows a floating dark panel just below the menu bar with a pulsing cyan glow border. It fades in, glows for 5 seconds, and fades out. New messages replace the current overlay.
 
 ## Menu Bar Flash
