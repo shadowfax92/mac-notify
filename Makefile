@@ -2,8 +2,9 @@ BINARY  := mac-notify
 GOBIN   := $(shell go env GOPATH)/bin
 APP_DIR := $(HOME)/Applications/mac-notify.app
 APP_BIN := $(APP_DIR)/Contents/MacOS/$(BINARY)
+FISH_FUNCTIONS ?= $(HOME)/.config/fish/functions
 
-.PHONY: build install uninstall clean
+.PHONY: build install uninstall clean fish
 
 build:
 	go build -o $(BINARY) .
@@ -42,6 +43,10 @@ uninstall:
 	rm -f $(GOBIN)/$(BINARY)
 	rm -rf $(APP_DIR)
 	@echo "Uninstalled $(BINARY)"
+
+fish:
+	mkdir -p $(FISH_FUNCTIONS)
+	cp mn.fish $(FISH_FUNCTIONS)/mn.fish
 
 clean:
 	rm -f $(BINARY)
