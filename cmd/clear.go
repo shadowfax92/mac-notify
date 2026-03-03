@@ -8,8 +8,10 @@ import (
 )
 
 var clearCmd = &cobra.Command{
-	Use:   "clear",
-	Short: "Clear all notifications",
+	Use:         "clear",
+	Aliases:     []string{"c"},
+	Annotations: map[string]string{"group": "Messages:"},
+	Short:       "Clear all notifications",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		resp, err := ipc.Send(ipc.Request{Action: "clear"})
 		if err != nil {

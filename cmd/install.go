@@ -48,8 +48,9 @@ func logPath() string {
 }
 
 var installCmd = &cobra.Command{
-	Use:   "install",
-	Short: "Install launchd service for auto-start on login",
+	Use:         "install",
+	Annotations: map[string]string{"group": "Daemon:"},
+	Short:       "Install launchd service for auto-start",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		exe, err := os.Executable()
 		if err != nil {

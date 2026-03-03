@@ -11,8 +11,9 @@ import (
 )
 
 var daemonCmd = &cobra.Command{
-	Use:   "daemon",
-	Short: "Start the menu bar notification daemon",
+	Use:         "daemon",
+	Annotations: map[string]string{"group": "Daemon:"},
+	Short:       "Run daemon in foreground (for debugging)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
 		if err != nil {

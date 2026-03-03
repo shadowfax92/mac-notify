@@ -8,8 +8,10 @@ import (
 )
 
 var listCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List current notifications",
+	Use:         "list",
+	Aliases:     []string{"ls", "l"},
+	Annotations: map[string]string{"group": "Messages:"},
+	Short:       "List current notifications",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		resp, err := ipc.Send(ipc.Request{Action: "list"})
 		if err != nil {

@@ -10,8 +10,9 @@ import (
 )
 
 var uninstallCmd = &cobra.Command{
-	Use:   "uninstall",
-	Short: "Remove launchd service and stop daemon",
+	Use:         "uninstall",
+	Annotations: map[string]string{"group": "Daemon:"},
+	Short:       "Remove launchd service and stop daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		plist := plistPath()
 

@@ -10,8 +10,10 @@ import (
 )
 
 var configCmd = &cobra.Command{
-	Use:   "config",
-	Short: "Open config file in default editor",
+	Use:         "config",
+	Aliases:     []string{"cfg"},
+	Annotations: map[string]string{"group": "Daemon:"},
+	Short:       "Open config in editor",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := config.Path()
 		if _, err := os.Stat(cfg); os.IsNotExist(err) {

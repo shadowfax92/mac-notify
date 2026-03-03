@@ -9,8 +9,9 @@ import (
 )
 
 var statusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Check if the daemon is running",
+	Use:         "status",
+	Annotations: map[string]string{"group": "Daemon:"},
+	Short:       "Check if the daemon is running",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		resp, err := ipc.Send(ipc.Request{Action: "list"})
 		if err != nil {

@@ -14,10 +14,11 @@ var (
 )
 
 var sendCmd = &cobra.Command{
-	Use:   "send [message]",
-	Short: "Send a notification message",
-	Long:  "Send a message to the menu bar daemon. Use --source to tag the origin, --id for upsert behavior.",
-	Args:  cobra.MinimumNArgs(1),
+	Use:         "send [message]",
+	Aliases:     []string{"s"},
+	Annotations: map[string]string{"group": "Messages:"},
+	Short:       "Send a notification",
+	Args:        cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		msg := strings.Join(args, " ")
 		resp, err := ipc.Send(ipc.Request{
