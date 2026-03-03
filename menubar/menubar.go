@@ -152,7 +152,11 @@ func showOverlay(msg, source string) {
 	cBody := C.CString(msg)
 	defer C.free(unsafe.Pointer(cTitle))
 	defer C.free(unsafe.Pointer(cBody))
-	C.showOverlayNotification(cTitle, cBody)
+	timeout := cfg.OverlayTimeout
+	if timeout <= 0 {
+		timeout = 5
+	}
+	C.showOverlayNotification(cTitle, cBody, C.double(timeout))
 }
 
 func flashTitle(msg, source string) {

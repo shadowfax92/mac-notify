@@ -9,9 +9,10 @@ import (
 )
 
 type Config struct {
-	SystemNotifications  bool `yaml:"system_notifications"`
-	OverlayNotifications bool `yaml:"overlay_notifications"`
-	MenuFlash            bool `yaml:"menu_flash"`
+	SystemNotifications  bool    `yaml:"system_notifications"`
+	OverlayNotifications bool    `yaml:"overlay_notifications"`
+	MenuFlash            bool    `yaml:"menu_flash"`
+	OverlayTimeout       float64 `yaml:"overlay_timeout"`
 }
 
 func Default() *Config {
@@ -19,6 +20,7 @@ func Default() *Config {
 		SystemNotifications:  true,
 		OverlayNotifications: true,
 		MenuFlash:            true,
+		OverlayTimeout:       5,
 	}
 }
 

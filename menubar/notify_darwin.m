@@ -75,7 +75,7 @@ static void pulseGlow(CALayer *layer, int generation) {
     }];
 }
 
-void showOverlayNotification(const char *title, const char *body) {
+void showOverlayNotification(const char *title, const char *body, double timeout) {
     char *titleCopy = strdup(title);
     char *bodyCopy = strdup(body);
 
@@ -155,8 +155,9 @@ void showOverlayNotification(const char *title, const char *body) {
         // Start glow pulse
         pulseGlow(contentView.layer, gen);
 
-        // Auto-dismiss after 5 seconds
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        // Auto-dismiss
+        double fadeStart = (timeout > 0.5) ? timeout - 0.5 : timeout;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(fadeStart * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (_overlayGeneration == gen && _overlayPanel) {
                 [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
                     ctx.duration = 0.5;
