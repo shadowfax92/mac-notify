@@ -93,7 +93,7 @@ void showOverlayNotification(const char *title, const char *body, double timeout
         free(titleCopy);
         free(bodyCopy);
 
-        CGFloat width = 510;
+        CGFloat width = 400;
         CGFloat pad = 20;
         CGFloat contentWidth = width - pad * 2;
         CGFloat titleHeight = 20;
