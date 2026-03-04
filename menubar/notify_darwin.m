@@ -94,7 +94,27 @@ void showOverlayNotification(const char *title, const char *body, double timeout
         free(bodyCopy);
 
         CGFloat width = 340;
-        CGFloat height = 64;
+        CGFloat pad = 14;
+        CGFloat contentWidth = width - pad * 2;
+        CGFloat titleHeight = 16;
+        CGFloat titleTopPad = 10;
+        CGFloat bodyTopPad = 4;
+        CGFloat bodyBottomPad = 10;
+        CGFloat maxBodyHeight = 120;
+
+        // Measure body text height
+        NSFont *bodyFont = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
+        NSDictionary *bodyAttrs = @{NSFontAttributeName: bodyFont};
+        NSRect bodyBounds = [bodyStr boundingRectWithSize:NSMakeSize(contentWidth, CGFLOAT_MAX)
+                                                 options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
+                                              attributes:bodyAttrs
+                                                 context:nil];
+        CGFloat bodyHeight = ceil(bodyBounds.size.height);
+        if (bodyHeight < 20) bodyHeight = 20;
+        if (bodyHeight > maxBodyHeight) bodyHeight = maxBodyHeight;
+
+        CGFloat height = titleTopPad + titleHeight + bodyTopPad + bodyHeight + bodyBottomPad;
+
         NSScreen *screen = [NSScreen mainScreen];
         NSRect visibleFrame = screen.visibleFrame;
         CGFloat x = NSMidX(visibleFrame) - width / 2;
@@ -131,15 +151,16 @@ void showOverlayNotification(const char *title, const char *body, double timeout
         NSTextField *titleLabel = [NSTextField labelWithString:titleStr];
         titleLabel.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
         titleLabel.textColor = [NSColor colorWithWhite:0.55 alpha:1.0];
-        titleLabel.frame = NSMakeRect(14, height - 26, width - 28, 16);
+        titleLabel.frame = NSMakeRect(pad, height - titleTopPad - titleHeight, contentWidth, titleHeight);
         titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
         [contentView addSubview:titleLabel];
 
         NSTextField *bodyLabel = [NSTextField labelWithString:bodyStr];
-        bodyLabel.font = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
+        bodyLabel.font = bodyFont;
         bodyLabel.textColor = [NSColor whiteColor];
-        bodyLabel.frame = NSMakeRect(14, 8, width - 28, 22);
-        bodyLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+        bodyLabel.frame = NSMakeRect(pad, bodyBottomPad, contentWidth, bodyHeight);
+        bodyLabel.lineBreakMode = NSLineBreakByWordWrapping;
+        bodyLabel.maximumNumberOfLines = 0;
         [contentView addSubview:bodyLabel];
 
         _overlayPanel.contentView = contentView;
