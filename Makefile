@@ -34,7 +34,8 @@ install: build
 	</plist>\n' > $(APP_DIR)/Contents/Info.plist
 	@# Symlink CLI to GOBIN
 	ln -sf $(APP_BIN) $(GOBIN)/$(BINARY)
-	@# Install and start daemon
+	@# Restart daemon (stop old, start new)
+	-$(APP_BIN) uninstall 2>/dev/null
 	$(APP_BIN) install
 	@echo "Installed $(BINARY) to $(APP_DIR) (CLI symlinked to $(GOBIN)/$(BINARY))"
 

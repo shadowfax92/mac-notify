@@ -93,14 +93,14 @@ void showOverlayNotification(const char *title, const char *body, double timeout
         free(titleCopy);
         free(bodyCopy);
 
-        CGFloat width = 340;
-        CGFloat pad = 14;
+        CGFloat width = 510;
+        CGFloat pad = 20;
         CGFloat contentWidth = width - pad * 2;
-        CGFloat titleHeight = 16;
-        CGFloat titleTopPad = 10;
-        CGFloat bodyTopPad = 4;
-        CGFloat bodyBottomPad = 10;
-        CGFloat maxBodyHeight = 120;
+        CGFloat titleHeight = 20;
+        CGFloat titleTopPad = 14;
+        CGFloat bodyTopPad = 6;
+        CGFloat bodyBottomPad = 14;
+        CGFloat maxBodyHeight = 180;
 
         // Measure body text height using NSTextStorage for accurate wrapping
         NSFont *bodyFont = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
@@ -109,6 +109,7 @@ void showOverlayNotification(const char *title, const char *body, double timeout
         NSTextContainer *textContainer = [[NSTextContainer alloc] initWithSize:NSMakeSize(contentWidth, CGFLOAT_MAX)];
         NSLayoutManager *layoutManager = [[NSLayoutManager alloc] init];
         textContainer.lineFragmentPadding = 0;
+        textContainer.lineBreakMode = NSLineBreakByCharWrapping;
         [layoutManager addTextContainer:textContainer];
         [textStorage addLayoutManager:layoutManager];
         [layoutManager glyphRangeForTextContainer:textContainer];
@@ -161,21 +162,21 @@ void showOverlayNotification(const char *title, const char *body, double timeout
         titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
         [contentView addSubview:titleLabel];
 
-        NSTextField *bodyLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(pad, bodyBottomPad, contentWidth, bodyHeight)];
-        bodyLabel.stringValue = bodyStr;
-        bodyLabel.font = bodyFont;
-        bodyLabel.textColor = [NSColor whiteColor];
-        bodyLabel.backgroundColor = [NSColor clearColor];
-        bodyLabel.bordered = NO;
-        bodyLabel.editable = NO;
-        bodyLabel.selectable = NO;
-        bodyLabel.drawsBackground = NO;
-        [bodyLabel.cell setWraps:YES];
-        [bodyLabel.cell setLineBreakMode:NSLineBreakByCharWrapping];
-        bodyLabel.maximumNumberOfLines = 0;
-        bodyLabel.preferredMaxLayoutWidth = contentWidth;
-        [contentView addSubview:bodyLabel];
-        [bodyLabel release];
+        NSTextView *bodyText = [[NSTextView alloc] initWithFrame:NSMakeRect(pad, bodyBottomPad, contentWidth, bodyHeight)];
+        [bodyText setString:bodyStr];
+        bodyText.font = bodyFont;
+        bodyText.textColor = [NSColor whiteColor];
+        bodyText.backgroundColor = [NSColor clearColor];
+        bodyText.drawsBackground = NO;
+        bodyText.editable = NO;
+        bodyText.selectable = NO;
+        bodyText.horizontallyResizable = NO;
+        bodyText.verticallyResizable = NO;
+        bodyText.textContainerInset = NSMakeSize(0, 0);
+        bodyText.textContainer.lineBreakMode = NSLineBreakByCharWrapping;
+        bodyText.textContainer.widthTracksTextView = YES;
+        [contentView addSubview:bodyText];
+        [bodyText release];
 
         _overlayPanel.contentView = contentView;
 
