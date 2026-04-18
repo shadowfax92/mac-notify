@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/nickhudkins/mac-notify/config"
 	"github.com/nickhudkins/mac-notify/ipc"
 	"github.com/spf13/cobra"
 )
@@ -20,13 +21,17 @@ var sendCmd = &cobra.Command{
 	Short:       "Send a notification",
 	Args:        cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		msg := strings.Join(args, " ")
-		resp, err := ipc.Send(ipc.Request{
-			Action:  "send",
-			Message: msg,
-			Source:  sendSource,
-			ID:      sendID,
-		})
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("load config: %w", err)
+		}
+
+		req, err := resolveSendRequest(cfg, strings.Join(args, " "), sendSource, sendID)
+		if err != nil {
+			return err
+		}
+
+		resp, err := ipc.Send(req)
 		if err != nil {
 			return err
 		}

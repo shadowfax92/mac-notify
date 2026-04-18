@@ -46,6 +46,7 @@ make uninstall
 mac-notify send "hello world"
 mac-notify send "build passed" --source ci
 mac-notify send "deploying v2" --source deploy --id deploy-status
+mac-notify send "$MESSAGE"
 mac-notify list
 mac-notify clear
 ```
@@ -111,6 +112,7 @@ When enabled, each `send` also triggers a macOS notification banner with sound. 
 system_notifications: true
 overlay_notifications: true
 menu_flash: true
+overlay_timeout: 5
 ```
 
 | Key | Default | Description |
@@ -118,6 +120,71 @@ menu_flash: true
 | `system_notifications` | `true` | Show native macOS notification banners |
 | `overlay_notifications` | `true` | Show floating overlay popup with glow |
 | `menu_flash` | `true` | Flash message text in menu bar for 2s |
+| `overlay_timeout` | `5` | Overlay auto-dismiss timeout in seconds |
+
+### Send Formatting
+
+`mac-notify send` can derive the final message, source, and id from config before it talks to the daemon. This is useful when you want to call `mac-notify send "$MESSAGE"` directly from scripts or other tools and let `mac-notify` fill in the rest.
+
+```yaml
+system_notifications: true
+overlay_notifications: true
+menu_flash: true
+overlay_timeout: 5
+send:
+  source: "$DIR_NAME"
+  id: "$GIT_BRANCH_NAME"
+```
+
+The `send` section supports:
+
+| Key | Description |
+|-----|-------------|
+| `message` | Override the final message using shell-style `$VAR` / `${VAR}` expansion |
+| `source` | Override the final source label using shell-style expansion |
+| `id` | Override the final upsert id using shell-style expansion |
+| `context_command` | Optional shell command that runs before expansion and prints extra `KEY=VALUE` lines |
+
+Available variables:
+
+| Variable | Description |
+|----------|-------------|
+| `MESSAGE` | Raw message passed to `mac-notify send` |
+| `SOURCE` | Raw `--source` flag value |
+| `ID` | Raw `--id` flag value |
+| `CWD` | Current working directory |
+| `DIR_NAME` | Basename of `CWD` |
+| `GIT_BRANCH_NAME` | Current git branch, if `CWD` is inside a git repo |
+| any existing environment variable | Passed through automatically |
+
+Missing variables expand to an empty string.
+
+### `context_command`
+
+If you need values that are not already in your environment, set `send.context_command`. It runs through `/bin/sh -c ...` before the final expansion step and receives the current environment plus the built-in variables above.
+
+Each non-empty stdout line must be `KEY=VALUE`. Those values are merged into the context and can then be used in `send.message`, `send.source`, and `send.id`.
+
+Example: tmux-aware notifications without wrapping `mac-notify` in another script:
+
+```yaml
+send:
+  message: "$MESSAGE"
+  source: "$TMUX_SESSION_NAME:$TMUX_WINDOW_NAME"
+  id: "$TMUX_SESSION_NAME:$TMUX_WINDOW_NAME"
+  context_command: |
+    tmux display-message -p 'TMUX_SESSION_NAME=#{session_name}
+    TMUX_WINDOW_NAME=#{window_name}
+    TMUX_PANE_NAME=#{pane_title}' 2>/dev/null || true
+```
+
+Example: use git and directory context for direct forwarding:
+
+```yaml
+send:
+  source: "$DIR_NAME"
+  id: "$DIR_NAME:$GIT_BRANCH_NAME"
+```
 
 ## Architecture
 
