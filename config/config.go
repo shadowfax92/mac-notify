@@ -9,10 +9,18 @@ import (
 )
 
 type Config struct {
-	SystemNotifications  bool    `yaml:"system_notifications"`
-	OverlayNotifications bool    `yaml:"overlay_notifications"`
-	MenuFlash            bool    `yaml:"menu_flash"`
-	OverlayTimeout       float64 `yaml:"overlay_timeout"`
+	SystemNotifications  bool        `yaml:"system_notifications"`
+	OverlayNotifications bool        `yaml:"overlay_notifications"`
+	MenuFlash            bool        `yaml:"menu_flash"`
+	OverlayTimeout       float64     `yaml:"overlay_timeout"`
+	Send                 *SendConfig `yaml:"send,omitempty"`
+}
+
+type SendConfig struct {
+	Message        string `yaml:"message,omitempty"`
+	Source         string `yaml:"source,omitempty"`
+	ID             string `yaml:"id,omitempty"`
+	ContextCommand string `yaml:"context_command,omitempty"`
 }
 
 func Default() *Config {
