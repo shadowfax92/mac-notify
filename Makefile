@@ -3,8 +3,13 @@ GOBIN   := $(shell go env GOPATH)/bin
 APP_DIR := $(HOME)/Applications/mac-notify.app
 APP_BIN := $(APP_DIR)/Contents/MacOS/$(BINARY)
 FISH_FUNCTIONS ?= $(HOME)/.config/fish/functions
+UID := $(shell id -u)
+PLIST_LABEL := com.mac-notify.daemon
+PLIST_PATH := $(HOME)/Library/LaunchAgents/$(PLIST_LABEL).plist
+LEGACY_PLIST := $(HOME)/Library/LaunchAgents/com.nickhudkins.mac-notify.plist
+SOCKET := $(HOME)/.mac-notify.sock
 
-.PHONY: build install uninstall clean fish
+.PHONY: build install reinstall uninstall clean fish
 
 build:
 	go build -o $(BINARY) .
@@ -38,6 +43,16 @@ install: build
 	-$(APP_BIN) uninstall 2>/dev/null
 	$(APP_BIN) install
 	@echo "Installed $(BINARY) to $(APP_DIR) (CLI symlinked to $(GOBIN)/$(BINARY))"
+
+reinstall:
+	@$(GOBIN)/$(BINARY) uninstall 2>/dev/null || true
+	@launchctl bootout gui/$(UID)/$(PLIST_LABEL) 2>/dev/null || true
+	@launchctl bootout gui/$(UID) $(LEGACY_PLIST) 2>/dev/null || true
+	@launchctl unload $(LEGACY_PLIST) 2>/dev/null || true
+	rm -f $(PLIST_PATH) $(LEGACY_PLIST) $(SOCKET)
+	rm -f $(GOBIN)/$(BINARY)
+	rm -rf $(APP_DIR)
+	$(MAKE) install
 
 uninstall:
 	-$(GOBIN)/$(BINARY) uninstall
