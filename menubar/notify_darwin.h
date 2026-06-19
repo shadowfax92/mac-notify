@@ -5,5 +5,7 @@ void setupNotificationDelegate(void);
 void requestNotificationAuth(void);
 void sendDarwinNotification(const char *title, const char *body, const char *identifier);
 void showOverlayNotification(const char *title, const char *body, double timeout);
+void showBlockerNotification(const char *title, const char *body);
+void dismissBlocker(void);
 
 #endif

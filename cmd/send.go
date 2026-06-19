@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	sendSource string
-	sendID     string
+	sendSource  string
+	sendID      string
+	sendBlocker bool
 )
 
 var sendCmd = &cobra.Command{
@@ -30,6 +31,7 @@ var sendCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		req.Blocker = sendBlocker
 
 		resp, err := ipc.Send(req)
 		if err != nil {
@@ -45,5 +47,6 @@ var sendCmd = &cobra.Command{
 func init() {
 	sendCmd.Flags().StringVar(&sendSource, "source", "", "Source/origin of the notification (e.g. ci, build)")
 	sendCmd.Flags().StringVar(&sendID, "id", "", "Message ID for upsert (replaces existing message with same ID)")
+	sendCmd.Flags().BoolVar(&sendBlocker, "blocker", false, "Show a persistent red-glow overlay on the right edge until dismissed with ×")
 	rootCmd.AddCommand(sendCmd)
 }

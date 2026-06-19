@@ -16,6 +16,7 @@ A lightweight CLI that puts notification messages in your macOS menu bar. Messag
 - **Upsert by ID** — update an existing message in-place with `--id`
 - **Source tagging** — `--source ci` to know where it came from
 - **Overlay popup** — floating panel with pulsing cyan glow, auto-dismisses after 5s
+- **Blocker mode** — `--blocker` pins a persistent red-glow panel to the right edge that stays until you click its ✕
 - **Menu bar flash** — message text appears in the menu bar for 2s on each send
 - **Native notifications** — macOS banner alerts with sound (configurable)
 - **Daemon auto-start** — installs as a launchd service, runs on login
@@ -57,6 +58,7 @@ mac-notify clear
 mac-notify send [message]      # send a notification
 mac-notify send "msg" --source ci   # tag with source
 mac-notify send "msg" --id build    # upsert by ID
+mac-notify send "msg" --blocker     # persistent red blocker (dismiss with ✕)
 mac-notify list                # show current messages
 mac-notify clear               # clear all messages
 mac-notify status              # check if daemon is running
@@ -71,6 +73,7 @@ mac-notify daemon              # run daemon in foreground (for debugging)
 |------|---------|-------------|
 | `--source` | `send` | Origin label (e.g. `ci`, `build`, `deploy`) |
 | `--id` | `send` | Message ID for upsert — replaces existing message with same ID |
+| `--blocker` | `send` | Show a persistent red-glow panel on the right edge until dismissed with ✕ |
 
 ## Menu Bar
 
@@ -95,6 +98,16 @@ Click a message to dismiss it. Click **Clear All** to reset.
 </p>
 
 Each `send` shows a floating dark panel just below the menu bar with a pulsing cyan glow border. It fades in, glows for 5 seconds, and fades out. New messages replace the current overlay.
+
+## Blocker Mode
+
+```sh
+mac-notify send --blocker "Deploy is frozen — resolve the conflict before continuing"
+```
+
+For things that must not scroll away, `--blocker` shows a **persistent** panel pinned to the **right edge** of the screen with a pulsing **red** glow. Unlike the overlay it never auto-dismisses — it stays until you click the **✕** in its corner. A new `--blocker` send replaces the current one, and `mac-notify clear` dismisses it too.
+
+The send is otherwise normal: it still queues in the menu bar list and (when enabled) fires a system notification. `--blocker` just swaps the transient overlay for the persistent red panel, and is shown even if `overlay_notifications` is disabled.
 
 ## Menu Bar Flash
 
