@@ -60,7 +60,7 @@ func handleSend(req ipc.Request) ipc.Response {
 				messages[i].Time = time.Now()
 				updateTitle()
 				sendSystemNotification(req.Message, req.Source, req.ID)
-				showOverlay(req.Message, req.Source)
+				presentOverlay(req)
 				flashTitle(req.Message, req.Source)
 				return ipc.Response{OK: true}
 			}
@@ -81,7 +81,7 @@ func handleSend(req ipc.Request) ipc.Response {
 	})
 	updateTitle()
 	sendSystemNotification(req.Message, req.Source, id)
-	showOverlay(req.Message, req.Source)
+	presentOverlay(req)
 	flashTitle(req.Message, req.Source)
 	return ipc.Response{OK: true}
 }
@@ -91,6 +91,7 @@ func handleClear() ipc.Response {
 	defer mu.Unlock()
 	messages = nil
 	updateTitle()
+	C.dismissBlocker()
 	return ipc.Response{OK: true}
 }
 
@@ -140,6 +141,16 @@ func sendSystemNotification(msg, source, id string) {
 	C.sendDarwinNotification(cTitle, cBody, cID)
 }
 
+// presentOverlay routes a send to the persistent red blocker panel when
+// req.Blocker is set, otherwise to the transient overlay.
+func presentOverlay(req ipc.Request) {
+	if req.Blocker {
+		showBlocker(req.Message, req.Source)
+		return
+	}
+	showOverlay(req.Message, req.Source)
+}
+
 func showOverlay(msg, source string) {
 	if cfg == nil || !cfg.OverlayNotifications {
 		return
@@ -157,6 +168,20 @@ func showOverlay(msg, source string) {
 		timeout = 5
 	}
 	C.showOverlayNotification(cTitle, cBody, C.double(timeout))
+}
+
+// showBlocker shows the persistent red-glow panel. It is not gated by
+// OverlayNotifications: --blocker is an explicit request, not the ambient overlay.
+func showBlocker(msg, source string) {
+	title := "mac-notify"
+	if source != "" {
+		title = source
+	}
+	cTitle := C.CString(title)
+	cBody := C.CString(msg)
+	defer C.free(unsafe.Pointer(cTitle))
+	defer C.free(unsafe.Pointer(cBody))
+	C.showBlockerNotification(cTitle, cBody)
 }
 
 func flashTitle(msg, source string) {
@@ -249,6 +274,7 @@ func menuItems() []menuet.MenuItem {
 				mu.Lock()
 				messages = nil
 				updateTitle()
+				C.dismissBlocker()
 				mu.Unlock()
 			},
 		})

@@ -9,10 +9,10 @@ import (
 var SocketPath = filepath.Join(os.Getenv("HOME"), ".mac-notify.sock")
 
 type Message struct {
-	ID      string    `json:"id"`
-	Text    string    `json:"message"`
-	Source  string    `json:"source,omitempty"`
-	Time    time.Time `json:"time"`
+	ID     string    `json:"id"`
+	Text   string    `json:"message"`
+	Source string    `json:"source,omitempty"`
+	Time   time.Time `json:"time"`
 }
 
 type Request struct {
@@ -20,6 +20,7 @@ type Request struct {
 	Message string `json:"message,omitempty"`
 	Source  string `json:"source,omitempty"`
 	ID      string `json:"id,omitempty"`
+	Blocker bool   `json:"blocker,omitempty"`
 }
 
 type Response struct {
