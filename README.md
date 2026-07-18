@@ -16,7 +16,7 @@ A lightweight CLI that puts notification messages in your macOS menu bar. Messag
 - **Upsert by ID** — update an existing message in-place with `--id`
 - **Source tagging** — `--source ci` to know where it came from
 - **Overlay popup** — floating panel with pulsing cyan glow, auto-dismisses after 5s
-- **Blocker mode** — `--blocker` pins a persistent red-glow panel to the right edge that stays until you click its ✕
+- **Blocker mode** — `--blocker` pins persistent red-glow panels to the right edge, stacked vertically, each staying until you click its ✕
 - **Menu bar flash** — message text appears in the menu bar for 2s on each send
 - **Native notifications** — macOS banner alerts with sound (configurable)
 - **Daemon auto-start** — installs as a launchd service, runs on login
@@ -105,7 +105,7 @@ Each `send` shows a floating dark panel just below the menu bar with a pulsing c
 mac-notify send --blocker "Deploy is frozen — resolve the conflict before continuing"
 ```
 
-For things that must not scroll away, `--blocker` shows a **persistent** panel pinned to the **right edge** of the screen with a pulsing **red** glow. Unlike the overlay it never auto-dismisses — it stays until you click the **✕** in its corner. A new `--blocker` send replaces the current one, and `mac-notify clear` dismisses it too.
+For things that must not scroll away, `--blocker` shows a **persistent** panel pinned to the **right edge** of the screen with a pulsing **red** glow. Unlike the overlay it never auto-dismisses — it stays until you click the **✕** in its corner. Blockers **stack vertically**: a new `--blocker` send takes the top slot and the existing ones slide down, each dismissed individually with its own ✕ (panels below slide back up). `mac-notify clear` dismisses the whole stack.
 
 The send is otherwise normal: it still queues in the menu bar list and (when enabled) fires a system notification. `--blocker` just swaps the transient overlay for the persistent red panel, and is shown even if `overlay_notifications` is disabled.
 

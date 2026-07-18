@@ -56,12 +56,11 @@ void sendDarwinNotification(const char *title, const char *body, const char *ide
 static NSPanel *_overlayPanel = nil;
 static int _overlayGeneration = 0;
 
-// Breathing glow animation. panel/generation point at the owning panel's
-// statics so a single pulse loop self-terminates once that panel is replaced
-// (generation bumped) or closed (panel niled) — shared by the overlay and the
-// blocker.
-static void pulseGlow(CALayer *layer, NSPanel **panel, int *generation, int gen) {
-    if (*panel == nil || *generation != gen) return;
+// Breathing glow animation. The alive block decides when the loop stops: the
+// overlay ties it to its singleton panel/generation, blockers to membership in
+// the blocker registry — so a pulse never touches a torn-down panel.
+static void pulseGlow(CALayer *layer, BOOL (^alive)(void)) {
+    if (!alive()) return;
 
     BOOL expand = (layer.shadowRadius < 15);
     CGFloat targetRadius = expand ? 20 : 8;
@@ -74,7 +73,7 @@ static void pulseGlow(CALayer *layer, NSPanel **panel, int *generation, int gen)
         layer.shadowOpacity = targetOpacity;
     } completionHandler:^{
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            pulseGlow(layer, panel, generation, gen);
+            pulseGlow(layer, alive);
         });
     }];
 }
@@ -198,7 +197,9 @@ void showOverlayNotification(const char *title, const char *body, double timeout
         }];
 
         // Start glow pulse
-        pulseGlow(contentView.layer, &_overlayPanel, &_overlayGeneration, gen);
+        pulseGlow(contentView.layer, ^BOOL(void) {
+            return _overlayPanel != nil && _overlayGeneration == gen;
+        });
 
         // Auto-dismiss
         double fadeStart = (timeout > 0.5) ? timeout - 0.5 : timeout;
@@ -219,25 +220,51 @@ void showOverlayNotification(const char *title, const char *body, double timeout
     });
 }
 
-// --- Blocker Window ---
+// --- Blocker Windows ---
 //
-// A persistent variant of the overlay: red glow, anchored to the right edge,
-// stays on screen until the user clicks its × (or `clear` dismisses it).
-// Unlike the overlay it accepts mouse events for the close button; the
+// Persistent variants of the overlay: red glow, stacked vertically down the
+// right edge, each stays on screen until the user clicks its × (or `clear`
+// dismisses the whole stack). A new --blocker send takes the top slot and the
+// existing stack slides down; closing one lets the panels below slide back up.
+// Unlike the overlay they accept mouse events for the close button; the
 // nonactivating panel style keeps those clicks from stealing focus from the
 // frontmost app.
 
-static NSPanel *_blockerPanel = nil;
-static int _blockerGeneration = 0;
+static NSMutableArray *_blockerOrder = nil;        // NSNumber tokens, index 0 = top (newest)
+static NSMutableDictionary *_blockerPanels = nil;  // token -> NSPanel
+static NSInteger _blockerNextToken = 0;
 
-// Fade out and tear down the current blocker. Niling _blockerPanel first stops
-// the glow pulse (it guards on the panel being non-nil) before the panel is
-// released, so the pulse never touches a freed layer. Main thread only.
-static void closeBlockerNow(void) {
-    if (_blockerPanel == nil) return;
-    NSPanel *panel = _blockerPanel;
-    _blockerPanel = nil;
-    _blockerGeneration++;
+// Reposition every blocker: index 0 hugs the menu bar, the rest hang below it
+// in stack order. Animated, so additions/removals slide. Main thread only.
+static void reflowBlockers(void) {
+    NSScreen *screen = [NSScreen mainScreen];
+    NSRect visibleFrame = screen.visibleFrame;
+    CGFloat margin = 16;
+    CGFloat gap = 12;
+    CGFloat y = NSMaxY(visibleFrame) - 8;
+    for (NSNumber *tok in _blockerOrder) {
+        NSPanel *panel = [_blockerPanels objectForKey:tok];
+        if (panel == nil) continue;
+        NSRect f = panel.frame;
+        f.origin.x = NSMaxX(visibleFrame) - f.size.width - margin;
+        y -= f.size.height;
+        f.origin.y = y;
+        y -= gap;
+        [panel.animator setFrame:f display:YES];
+    }
+}
+
+// Fade out and tear down one blocker. Removing its token from the registry
+// first stops its glow pulse (the pulse guards on registry membership) before
+// the panel is released, so the pulse never touches a freed layer. The
+// completion block retains the panel through the fade, then releases the
+// final alloc reference. Main thread only.
+static void closeBlocker(NSNumber *tok) {
+    NSPanel *panel = [_blockerPanels objectForKey:tok];
+    if (panel == nil) return;
+    [_blockerPanels removeObjectForKey:tok];
+    [_blockerOrder removeObject:tok];
+    reflowBlockers();
     [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
         ctx.duration = 0.25;
         panel.animator.alphaValue = 0;
@@ -247,13 +274,20 @@ static void closeBlockerNow(void) {
     }];
 }
 
+static void closeAllBlockers(void) {
+    NSArray *toks = [NSArray arrayWithArray:_blockerOrder];
+    for (NSNumber *tok in toks) {
+        closeBlocker(tok);
+    }
+}
+
 @interface BlockerController : NSObject
 - (void)dismiss:(id)sender;
 @end
 
 @implementation BlockerController
 - (void)dismiss:(id)sender {
-    closeBlockerNow();
+    closeBlocker([NSNumber numberWithInteger:((NSView *)sender).tag]);
 }
 @end
 
@@ -262,7 +296,7 @@ static BlockerController *_blockerController = nil;
 
 void dismissBlocker(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        closeBlockerNow();
+        closeAllBlockers();
     });
 }
 
@@ -271,16 +305,10 @@ void showBlockerNotification(const char *title, const char *body) {
     char *bodyCopy = strdup(body);
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        // Replace any existing blocker immediately (no fade) so the new panel
-        // doesn't race an outgoing fade-out.
-        if (_blockerPanel) {
-            [_blockerPanel close];
-            [_blockerPanel release];
-            _blockerPanel = nil;
+        if (_blockerOrder == nil) {
+            _blockerOrder = [[NSMutableArray alloc] init];
+            _blockerPanels = [[NSMutableDictionary alloc] init];
         }
-        _blockerGeneration++;
-        int gen = _blockerGeneration;
-
         if (_blockerController == nil) {
             _blockerController = [[BlockerController alloc] init];
         }
@@ -312,20 +340,20 @@ void showBlockerNotification(const char *title, const char *body) {
         CGFloat y = NSMaxY(visibleFrame) - height - 8;
 
         NSRect frame = NSMakeRect(x, y, width, height);
-        _blockerPanel = [[NSPanel alloc]
+        NSPanel *panel = [[NSPanel alloc]
             initWithContentRect:frame
             styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
             backing:NSBackingStoreBuffered
             defer:NO];
 
-        _blockerPanel.level = NSStatusWindowLevel + 1;
-        _blockerPanel.opaque = NO;
-        _blockerPanel.backgroundColor = [NSColor clearColor];
-        _blockerPanel.hasShadow = NO;
-        _blockerPanel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
-                                           NSWindowCollectionBehaviorStationary |
-                                           NSWindowCollectionBehaviorFullScreenAuxiliary;
-        _blockerPanel.hidesOnDeactivate = NO;
+        panel.level = NSStatusWindowLevel + 1;
+        panel.opaque = NO;
+        panel.backgroundColor = [NSColor clearColor];
+        panel.hasShadow = NO;
+        panel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                   NSWindowCollectionBehaviorStationary |
+                                   NSWindowCollectionBehaviorFullScreenAuxiliary;
+        panel.hidesOnDeactivate = NO;
 
         NSColor *redGlow = [NSColor colorWithRed:1.0 green:0.23 blue:0.19 alpha:1.0];
 
@@ -375,22 +403,32 @@ void showBlockerNotification(const char *title, const char *body) {
             NSParagraphStyleAttributeName: centered,
         }] autorelease];
         [centered release];
+        closeButton.tag = ++_blockerNextToken;
+        NSNumber *tok = [NSNumber numberWithInteger:closeButton.tag];
         closeButton.target = _blockerController;
         closeButton.action = @selector(dismiss:);
         [contentView addSubview:closeButton];
         [closeButton release];
 
-        _blockerPanel.contentView = contentView;
+        panel.contentView = contentView;
+
+        // New blocker takes the top slot; reflow slides the older ones down.
+        [_blockerOrder insertObject:tok atIndex:0];
+        [_blockerPanels setObject:panel forKey:tok];
 
         // Fade in
-        _blockerPanel.alphaValue = 0;
-        [_blockerPanel orderFront:nil];
+        panel.alphaValue = 0;
+        [panel orderFront:nil];
         [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
             ctx.duration = 0.3;
-            _blockerPanel.animator.alphaValue = 1.0;
+            panel.animator.alphaValue = 1.0;
         }];
 
         // Persistent: glow pulses until dismissed; no auto-dismiss timer.
-        pulseGlow(contentView.layer, &_blockerPanel, &_blockerGeneration, gen);
+        pulseGlow(contentView.layer, ^BOOL(void) {
+            return [_blockerPanels objectForKey:tok] != nil;
+        });
+
+        reflowBlockers();
     });
 }
