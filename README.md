@@ -28,8 +28,9 @@ A lightweight CLI that puts notification messages in your macOS menu bar. Messag
 Requires Go 1.21+ and macOS.
 
 ```sh
-git clone https://github.com/nickhudkins/mac-notify
+git clone https://github.com/shadowfax92/mac-notify
 cd mac-notify
+mkdir -p ~/go/bin # in case user has not installed go binaries previously
 make install
 ```
 
