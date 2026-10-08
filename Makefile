@@ -9,12 +9,19 @@ PLIST_PATH := $(HOME)/Library/LaunchAgents/$(PLIST_LABEL).plist
 LEGACY_PLIST := $(HOME)/Library/LaunchAgents/com.nickhudkins.mac-notify.plist
 SOCKET := $(HOME)/.mac-notify.sock
 
-.PHONY: build install reinstall uninstall clean fish
+.PHONY: build install reinstall uninstall clean fish clear-before-install
 
 build:
 	go build -o $(BINARY) .
 
+# Native notifications belong to the old daemon's signing source. Clear through
+# it before replacing its app or stopping it; a new ad-hoc signature cannot reach
+# that source. A missing app or stopped daemon is normal, so cleanup is best-effort.
+clear-before-install:
+	@"$(APP_BIN)" clear >/dev/null 2>&1 || true
+
 install: build
+	@$(MAKE) --no-print-directory clear-before-install
 	@# Create .app bundle for daemon (required for macOS notifications)
 	@mkdir -p $(APP_DIR)/Contents/MacOS $(APP_DIR)/Contents/Resources
 	cp $(BINARY) $(APP_BIN)
@@ -44,7 +51,7 @@ install: build
 	$(APP_BIN) install
 	@echo "Installed $(BINARY) to $(APP_DIR) (CLI symlinked to $(GOBIN)/$(BINARY))"
 
-reinstall:
+reinstall: clear-before-install
 	@$(GOBIN)/$(BINARY) uninstall 2>/dev/null || true
 	@launchctl bootout gui/$(UID)/$(PLIST_LABEL) 2>/dev/null || true
 	@launchctl bootout gui/$(UID) $(LEGACY_PLIST) 2>/dev/null || true

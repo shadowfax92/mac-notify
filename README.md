@@ -35,6 +35,13 @@ make install
 
 This builds the binary, creates an `.app` bundle at `~/Applications/mac-notify.app`, installs the launchd daemon, and symlinks the CLI to your `$GOPATH/bin`.
 
+Both `make install` and `make reinstall` first ask the old daemon to clear its
+messages and native notifications before replacing or stopping it. This prevents
+notifications from being orphaned when ad-hoc signing changes the app's notification
+source. Cleanup is best-effort: a missing app or stopped daemon does not block
+installation. Notifications already orphaned by older installs must be dismissed
+manually in Notification Center.
+
 ## Uninstall
 
 ```sh
