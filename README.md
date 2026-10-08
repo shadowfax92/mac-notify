@@ -15,7 +15,7 @@ A lightweight CLI that puts notification messages in your macOS menu bar. Messag
 - **Click to dismiss** — click any message in the dropdown to remove it
 - **Upsert by ID** — update an existing message in-place with `--id`
 - **Source tagging** — `--source ci` to know where it came from
-- **Overlay popup** — dark terminal-style panel with green accents and a blinking cursor, auto-dismisses after 5s
+- **Overlay popup** — dark terminal-style panel with green accents, auto-dismisses after 5s
 - **Blocker mode** — `-b` / `--blocker` pins persistent dark terminal-style panels to the top-right, each with a red **■ BLOCKED** strip and its own ✕ to dismiss
 - **Menu bar flash** — message text appears in the menu bar for 2s on each send
 - **Native notifications** — macOS banner alerts with sound (configurable)
@@ -109,7 +109,7 @@ message leaves blocker panels open; their **✕** buttons only close the panels.
   <img src="assets/overlay.png" alt="overlay notification" width="400" />
 </p>
 
-Each non-blocker `send` shows a floating dark terminal-style panel centered just below the menu bar. It uses green accents, types in the message, and blinks a block cursor. It fades in and auto-dismisses after 5 seconds by default. New messages replace the current overlay.
+Each non-blocker `send` shows a floating dark terminal-style panel centered just below the menu bar. It uses green accents and types in the message. It fades in and auto-dismisses after 5 seconds by default. New messages replace the current overlay.
 
 ## Blocker Mode
 
@@ -119,7 +119,7 @@ mac-notify send --blocker "Deploy is frozen — resolve the conflict before cont
 mac-notify send -b "Deploy is frozen — resolve the conflict before continuing"
 ```
 
-For things that must not scroll away, `-b` (or `--blocker`) shows a **persistent dark terminal-style panel** at the **top-right** of the screen with a red **■ BLOCKED** header strip and a blinking red cursor. It never auto-dismisses — it stays until you click the **✕** in its corner. Blockers **stack vertically**: a new blocker send takes the top slot and the existing ones slide down, each dismissed individually with its own ✕ (panels below slide back up). `mac-notify clear` dismisses the whole stack.
+For things that must not scroll away, `-b` (or `--blocker`) shows a **persistent dark terminal-style panel** at the **top-right** of the screen with a red **■ BLOCKED** header strip. It never auto-dismisses — it stays until you click the **✕** in its corner. Blockers **stack vertically**: a new blocker send takes the top slot and the existing ones slide down, each dismissed individually with its own ✕ (panels below slide back up). `mac-notify clear` dismisses the whole stack.
 
 The send is otherwise normal: it still queues in the menu bar list and (when enabled) fires a system notification. `-b` and `--blocker` swap the transient overlay for the persistent terminal panel, which is shown even if `overlay_notifications` is disabled.
 

@@ -75,10 +75,10 @@ void removeDarwinNotification(const char *identifier) {
 // --- Terminal look ---
 //
 // The overlay and the blockers share one visual language ("02 Terminal" in
-// the design file): an always-dark, hard-cornered SF Mono slab whose block
-// cursor blinks where the old glow used to pulse. It is deliberately unlike
-// the focus app's pill (clear glass capsule, amber glow), so the two read
-// apart at a glance even though both can sit at the top-center of the screen.
+// the design file): an always-dark, hard-cornered SF Mono slab. It is
+// deliberately unlike the focus app's pill (clear glass capsule, amber glow),
+// so the two read apart at a glance even though both can sit at the
+// top-center of the screen.
 //
 // The helpers below only build and animate views. Where a panel sits, and how
 // blockers stack, stays with showOverlayNotification and reflowBlockers. All
@@ -93,8 +93,6 @@ static const CGFloat kTermLineHeight = 21;       // fixed body line box
 static const NSUInteger kTermMaxBodyLines = 8;   // roughly the old 180pt body cap
 static const NSUInteger kTermTypeTicks = 40;     // 40 ticks x 10ms = 0.4s to type any body
 static const double kTermTypeTick = 0.010;
-static const double kTermBlink = 0.53;
-static NSString *const kTermCursor = @"█";  // full block, drawn as the cursor
 
 static NSColor *termColor(unsigned rgb, CGFloat alpha) {
     return [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
@@ -112,13 +110,11 @@ static NSColor *termColor(unsigned rgb, CGFloat alpha) {
 - (BOOL)isFlipped { return YES; }
 @end
 
-// Body text with the cursor glyph appended. The cursor is part of the text so
-// TextKit wraps it like any character and it always lands right after the last
-// glyph. Lines wrap at words (a word longer than a line breaks by character)
-// in a fixed 21pt line box. A typed prefix never needs more lines than the
-// full body, so the panel is sized once up front; a half-typed word at a line
-// end may hop down a line while it types, as in any editor.
-static NSAttributedString *termBody(NSString *text, NSColor *textColor, NSColor *cursorColor) {
+// Styled body text. Lines wrap at words (a word longer than a line breaks by
+// character) in a fixed 21pt line box. A typed prefix never needs more lines
+// than the full body, so the panel is sized once up front; a half-typed word
+// at a line end may hop down a line while it types, as in any editor.
+static NSAttributedString *termBody(NSString *text, NSColor *textColor) {
     NSFont *font = [NSFont monospacedSystemFontOfSize:14 weight:NSFontWeightRegular];
     NSMutableParagraphStyle *para = [[NSMutableParagraphStyle alloc] init];
     para.minimumLineHeight = kTermLineHeight;
@@ -134,23 +130,18 @@ static NSAttributedString *termBody(NSString *text, NSColor *textColor, NSColor 
         NSParagraphStyleAttributeName: para,
         NSBaselineOffsetAttributeName: @(lift),
     };
-    NSMutableAttributedString *s = [[NSMutableAttributedString alloc] initWithString:text attributes:attrs];
-    NSMutableDictionary *cursorAttrs = [[attrs mutableCopy] autorelease];
-    cursorAttrs[NSForegroundColorAttributeName] = cursorColor;
-    NSAttributedString *cursor = [[NSAttributedString alloc] initWithString:kTermCursor attributes:cursorAttrs];
-    [s appendAttributedString:cursor];
-    [cursor release];
+    NSAttributedString *s = [[NSAttributedString alloc] initWithString:text attributes:attrs];
     [para release];
     return [s autorelease];
 }
 
-// Lays the body (cursor included) out at the panel's text width, the same way
-// makeTermBodyView will, and returns its line count. *lastFit receives the
-// index just past the last character on line kTermMaxBodyLines, or the text's
-// length when everything fits.
+// Lays the body out at the panel's text width, the same way makeTermBodyView
+// will, and returns its line count (at least 1, so an empty body keeps one
+// line of height). *lastFit receives the index just past the last character
+// on line kTermMaxBodyLines, or the text's length when everything fits.
 static NSUInteger termLayoutBody(NSString *text, NSUInteger *lastFit) {
     NSTextStorage *storage = [[NSTextStorage alloc] initWithAttributedString:
-        termBody(text, [NSColor whiteColor], [NSColor whiteColor])];
+        termBody(text, [NSColor whiteColor])];
     NSTextContainer *container = [[NSTextContainer alloc] initWithSize:NSMakeSize(kTermWidth - 2 * kTermInset, CGFLOAT_MAX)];
     NSLayoutManager *layout = [[NSLayoutManager alloc] init];
     container.lineFragmentPadding = 0;
@@ -163,7 +154,7 @@ static NSUInteger termLayoutBody(NSString *text, NSUInteger *lastFit) {
                                                   NSRange glyphRange, BOOL *stop) {
         lines++;
         if (lines == kTermMaxBodyLines) {
-            fit = MIN(text.length, NSMaxRange([layout characterRangeForGlyphRange:glyphRange actualGlyphRange:NULL]));
+            fit = NSMaxRange([layout characterRangeForGlyphRange:glyphRange actualGlyphRange:NULL]);
         }
     }];
     [storage release];
@@ -174,8 +165,8 @@ static NSUInteger termLayoutBody(NSString *text, NSUInteger *lastFit) {
 }
 
 // Fits the body into kTermMaxBodyLines and returns its height. Longer text is
-// cut at a composed-character boundary and ends in "…", so the cursor stays on
-// screen instead of being clipped with the overflow. *fitted receives the text
+// cut at a composed-character boundary and ends in "…", so the reader can see
+// it was cut rather than clipped with the overflow. *fitted receives the text
 // to display.
 static CGFloat termFitBody(NSString *text, NSString **fitted) {
     NSUInteger cut = 0;
@@ -185,9 +176,10 @@ static CGFloat termFitBody(NSString *text, NSString **fitted) {
         return lines * kTermLineHeight;
     }
     // Start from the end of the last line that fits and give back a composed
-    // character at a time until the cut text, "…" and the cursor fit. That
-    // takes a few steps: "…█" glues onto the cut word, so the word has to shrink
-    // until it fits on the line, and wide glyphs (emoji, CJK) need more room.
+    // character at a time until the cut text and "…" fit. On a full last line
+    // that can take a few steps: "…" glues onto the cut word, so the word has
+    // to shrink until word and "…" fit on the line together, and wide glyphs
+    // (emoji, CJK) need more room.
     NSString *candidate = @"…";
     while (cut > 0) {
         cut = [text rangeOfComposedCharacterSequenceAtIndex:cut - 1].location;
@@ -298,30 +290,13 @@ static NSPanel *makeTermPanel(NSRect frame) {
     return panel;
 }
 
-// Blinks the trailing cursor glyph until alive() turns false. Same guard
-// contract the glow pulse had: the overlay ties alive to its panel and
-// generation, blockers to registry membership, so a blink never touches a
-// torn-down panel. The scheduled block retains the text view until it runs.
-static void blinkCursor(NSTextView *body, NSColor *color, BOOL visible, BOOL (^alive)(void)) {
-    if (!alive()) return;
-    NSTextStorage *storage = body.textStorage;
-    NSUInteger length = storage.length;
-    if (length > 0) {
-        [storage addAttribute:NSForegroundColorAttributeName
-                        value:(visible ? color : [NSColor clearColor])
-                        range:NSMakeRange(length - kTermCursor.length, kTermCursor.length)];
-    }
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kTermBlink * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        blinkCursor(body, color, !visible, alive);
-    });
-}
-
 // Types the body in, a few characters per 10ms tick, so any length finishes
 // within kTermTypeTicks ticks (0.4s) and long messages keep the full
-// overlay_timeout on screen. The cursor rides along at the end of the typed
-// text. Calls done once everything is shown, unless alive() went false first.
-static void typeBody(NSTextView *body, NSString *text, NSColor *textColor, NSColor *cursorColor,
-                     NSUInteger shown, BOOL (^alive)(void), void (^done)(void)) {
+// overlay_timeout on screen. Stops early once alive() turns false: the overlay
+// ties it to its panel and generation, so a replaced or dismissed overlay is
+// never typed into. Each scheduled tick retains the text view until it runs.
+static void typeBody(NSTextView *body, NSString *text, NSColor *textColor,
+                     NSUInteger shown, BOOL (^alive)(void)) {
     if (!alive()) return;
     NSUInteger total = text.length;
     NSUInteger step = (total + kTermTypeTicks - 1) / kTermTypeTicks;
@@ -332,13 +307,10 @@ static void typeBody(NSTextView *body, NSString *text, NSColor *textColor, NSCol
         shown = NSMaxRange([text rangeOfComposedCharacterSequenceAtIndex:shown - 1]);
     }
     if (shown > total) shown = total;
-    [body.textStorage setAttributedString:termBody([text substringToIndex:shown], textColor, cursorColor)];
-    if (shown >= total) {
-        done();
-        return;
-    }
+    [body.textStorage setAttributedString:termBody([text substringToIndex:shown], textColor)];
+    if (shown >= total) return;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kTermTypeTick * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        typeBody(body, text, textColor, cursorColor, shown, alive, done);
+        typeBody(body, text, textColor, shown, alive);
     });
 }
 
@@ -438,9 +410,9 @@ void showOverlayNotification(const char *title, const char *body, double timeout
         [canvas addSubview:tag];
         [tag release];
 
-        // Body starts as just the cursor and types in below.
+        // Body starts empty and types in below.
         NSTextView *bodyView = makeTermBodyView(NSMakeRect(kTermInset, bodyTop, kTermWidth - 2 * kTermInset, bodyHeight),
-                                                termBody(@"", bodyColor, green));
+                                                termBody(@"", bodyColor));
         [canvas addSubview:bodyView];
 
         _overlayPanel.contentView = surface;
@@ -454,13 +426,10 @@ void showOverlayNotification(const char *title, const char *body, double timeout
             _overlayPanel.animator.alphaValue = 1.0;
         }];
 
-        // Type the body, then blink the cursor until this overlay is replaced
-        // or dismissed.
-        BOOL (^alive)(void) = ^BOOL(void) {
+        // Type the body in, stopping if this overlay is replaced or dismissed
+        // first.
+        typeBody(bodyView, shownBody, bodyColor, 0, ^BOOL(void) {
             return _overlayPanel != nil && _overlayGeneration == gen;
-        };
-        typeBody(bodyView, shownBody, bodyColor, green, 0, alive, ^{
-            blinkCursor(bodyView, green, YES, alive);
         });
 
         // Auto-dismiss
@@ -486,12 +455,11 @@ void showOverlayNotification(const char *title, const char *body, double timeout
 //
 // Persistent variants of the overlay: the same terminal slab with a red
 // "■ BLOCKED" header strip, stacked vertically down the right edge. Each stays
-// on screen, its red cursor blinking, until the user clicks its ✕ (or `clear`
-// dismisses the whole stack). A new --blocker send takes the top slot and the
-// existing stack slides down; closing one lets the panels below slide back up.
-// Unlike the overlay they accept mouse events for the close button; the
-// nonactivating panel style keeps those clicks from stealing focus from the
-// frontmost app.
+// on screen until the user clicks its ✕ (or `clear` dismisses the whole
+// stack). A new --blocker send takes the top slot and the existing stack
+// slides down; closing one lets the panels below slide back up. Unlike the
+// overlay they accept mouse events for the close button; the nonactivating
+// panel style keeps those clicks from stealing focus from the frontmost app.
 
 static NSMutableArray *_blockerOrder = nil;        // NSNumber tokens, index 0 = top (newest)
 static NSMutableDictionary *_blockerPanels = nil;  // token -> NSPanel
@@ -518,9 +486,9 @@ static void reflowBlockers(void) {
 }
 
 // Fade out and tear down one blocker. Removing its token from the registry
-// first stops its cursor blink (the blink guards on registry membership)
-// before the panel is released, so the blink never touches a freed view. The
-// completion block retains the panel through the fade, then releases the
+// first takes it out of the reflow and makes a repeat close (a second ✕ click
+// or a `clear` during the fade) a no-op, so the panel is released only once.
+// The completion block retains the panel through the fade, then releases the
 // final alloc reference. Main thread only.
 static void closeBlocker(NSNumber *tok) {
     NSPanel *panel = [_blockerPanels objectForKey:tok];
@@ -599,7 +567,7 @@ void showBlockerNotification(const char *title, const char *body) {
 
         // The blocked red: one notch softer than a pure alarm red so it does
         // not glare for as long as a blocker stays up, yet still reads as
-        // "blocked". It colors the strip, the cursor and, dimmed, the rim.
+        // "blocked". It colors the strip and, dimmed, the rim.
         NSColor *red = termColor(0xE04A3F, 1.0);
         NSColor *ink = termColor(0x140202, 1.0);
         TermCanvas *canvas = nil;
@@ -650,9 +618,8 @@ void showBlockerNotification(const char *title, const char *body) {
         [closeButton release];
 
         // A blocker is read at once, so its body appears whole (no typing).
-        NSColor *cursorColor = red;
         NSTextView *bodyView = makeTermBodyView(NSMakeRect(kTermInset, bodyTop, kTermWidth - 2 * kTermInset, bodyHeight),
-                                                termBody(shownBody, termColor(0xF6ECEC, 1.0), cursorColor));
+                                                termBody(shownBody, termColor(0xF6ECEC, 1.0)));
         [canvas addSubview:bodyView];
 
         panel.contentView = surface;
@@ -670,10 +637,7 @@ void showBlockerNotification(const char *title, const char *body) {
             panel.animator.alphaValue = 1.0;
         }];
 
-        // Persistent: the cursor blinks until dismissed; no auto-dismiss timer.
-        blinkCursor(bodyView, cursorColor, YES, ^BOOL(void) {
-            return [_blockerPanels objectForKey:tok] != nil;
-        });
+        // Persistent: no auto-dismiss timer, unlike the overlay.
 
         reflowBlockers();
     });
