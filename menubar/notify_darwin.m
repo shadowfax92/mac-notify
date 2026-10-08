@@ -597,12 +597,15 @@ void showBlockerNotification(const char *title, const char *body) {
         CGFloat y = NSMaxY(visibleFrame) - height - 8;
         NSPanel *panel = makeTermPanel(NSMakeRect(x, y, kTermWidth, height));
 
-        NSColor *red = termColor(0xEE2A1F, 1.0);
+        // The blocked red: one notch softer than a pure alarm red so it does
+        // not glare for as long as a blocker stays up, yet still reads as
+        // "blocked". It colors the strip, the cursor and, dimmed, the rim.
+        NSColor *red = termColor(0xE04A3F, 1.0);
         NSColor *ink = termColor(0x140202, 1.0);
         TermCanvas *canvas = nil;
         NSVisualEffectView *surface = makeTermSurface(NSMakeSize(kTermWidth, height),
                                                       termColor(0x0A0606, 0.92),
-                                                      termColor(0xFF4A4A, 0.65), &canvas);
+                                                      termColor(0xE5574F, 0.5), &canvas);
 
         // Header strip: "■ BLOCKED", the source, and the close box.
         NSView *strip = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, kTermWidth, stripHeight)];
