@@ -60,7 +60,7 @@ mac-notify send "msg" --source ci   # tag with source
 mac-notify send "msg" --id build    # upsert by ID
 mac-notify send "msg" --blocker     # persistent red blocker (dismiss with ✕)
 mac-notify list                # show current messages
-mac-notify clear               # clear all messages
+mac-notify clear               # clear messages and macOS Notification Center
 mac-notify status              # check if daemon is running
 mac-notify install             # install launchd service
 mac-notify uninstall           # remove launchd service and stop daemon
@@ -89,7 +89,10 @@ Click to open the dropdown:
 └─ Clear All
 ```
 
-Click a message to dismiss it. Click **Clear All** to reset.
+Click a message to dismiss it from both the dropdown and macOS Notification Center.
+Click **Clear All** (or run `mac-notify clear`) to clear every message, cancel pending
+native notifications, and dismiss the whole blocker stack. Dismissing a single
+message leaves blocker panels open; their **✕** buttons only close the panels.
 
 ## Overlay Popup
 
@@ -116,6 +119,11 @@ On each `send`, the menu bar temporarily shows the message text (e.g. `🔔 [ci]
 ## Native Notifications
 
 When enabled, each `send` also triggers a macOS notification banner with sound. The app appears in **System Settings → Notifications** as `mac-notify` with its own icon.
+
+Clearing or dismissing messages also removes the app's corresponding native
+notifications, even if `system_notifications` has since been disabled. Clear
+removes all native notifications owned by the app, including ones left by a
+previous daemon session.
 
 ## Config
 

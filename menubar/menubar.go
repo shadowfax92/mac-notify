@@ -91,6 +91,9 @@ func handleClear() ipc.Response {
 	defer mu.Unlock()
 	messages = nil
 	updateTitle()
+	// Cleanup is unconditional: native notifications can outlive a daemon
+	// restart or a change that disables system_notifications.
+	C.clearDarwinNotifications()
 	C.dismissBlocker()
 	return ipc.Response{OK: true}
 }
@@ -121,6 +124,9 @@ func handleRemove(req ipc.Request) ipc.Response {
 	}
 	messages = slices.Delete(messages, idx, idx+1)
 	updateTitle()
+	cID := C.CString(req.ID)
+	defer C.free(unsafe.Pointer(cID))
+	C.removeDarwinNotification(cID)
 	return ipc.Response{OK: true}
 }
 
@@ -255,15 +261,9 @@ func menuItems() []menuet.MenuItem {
 			items = append(items, menuet.MenuItem{
 				Text: text,
 				Clicked: func() {
-					mu.Lock()
-					for i, msg := range messages {
-						if msg.ID == msgID {
-							messages = slices.Delete(messages, i, i+1)
-							break
-						}
-					}
-					updateTitle()
-					mu.Unlock()
+					// Use the IPC handler so queue and native notification cleanup
+					// stay together under mu, including when sends race menu clicks.
+					handleRemove(ipc.Request{ID: msgID})
 				},
 			})
 		}
@@ -271,11 +271,7 @@ func menuItems() []menuet.MenuItem {
 		items = append(items, menuet.MenuItem{
 			Text: "Clear All",
 			Clicked: func() {
-				mu.Lock()
-				messages = nil
-				updateTitle()
-				C.dismissBlocker()
-				mu.Unlock()
+				handleClear()
 			},
 		})
 	}
