@@ -85,7 +85,9 @@ void removeDarwinNotification(const char *identifier) {
 // of them run on the main thread, and the file is compiled without ARC, so
 // every alloc is paired with a release.
 
-static const CGFloat kTermWidth = 420;
+// Today's panel width. Any wider and a top-center overlay would touch the
+// top-right blocker stack on 1280pt-wide screens.
+static const CGFloat kTermWidth = 400;
 static const CGFloat kTermInset = 16;            // left/right text inset
 static const CGFloat kTermLineHeight = 21;       // fixed body line box
 static const NSUInteger kTermMaxBodyLines = 8;   // roughly the old 180pt body cap
@@ -216,11 +218,17 @@ static NSTextView *makeTermBodyView(NSRect frame, NSAttributedString *initial) {
     return view;
 }
 
+// A one-line header label. Callers size rows from fittingSize, so line breaks
+// in the text (a --source can contain them) are flattened to spaces first;
+// otherwise the label would grow downward over the body.
 static NSTextField *termLabel(NSString *text, CGFloat size, NSFontWeight weight, NSColor *color) {
-    NSTextField *label = [NSTextField labelWithString:text];
+    NSString *oneLine = [[text componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]
+                         componentsJoinedByString:@" "];
+    NSTextField *label = [NSTextField labelWithString:oneLine];
     label.font = [NSFont monospacedSystemFontOfSize:size weight:weight];
     label.textColor = color;
     label.lineBreakMode = NSLineBreakByTruncatingTail;
+    label.maximumNumberOfLines = 1;
     return label;
 }
 
@@ -629,6 +637,8 @@ void showBlockerNotification(const char *title, const char *body) {
         closeButton.title = @"";
         closeButton.image = termCloseGlyph(ink);
         closeButton.imagePosition = NSImageOnly;
+        // The glyph is an image, so VoiceOver needs a name for the control.
+        closeButton.accessibilityLabel = @"Dismiss blocker";
         closeButton.tag = ++_blockerNextToken;
         NSNumber *tok = [NSNumber numberWithInteger:closeButton.tag];
         closeButton.target = _blockerController;
