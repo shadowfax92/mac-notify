@@ -72,52 +72,306 @@ void removeDarwinNotification(const char *identifier) {
     }
 }
 
+// --- Terminal look ---
+//
+// The overlay and the blockers share one visual language ("02 Terminal" in
+// the design file): an always-dark, hard-cornered SF Mono slab whose block
+// cursor blinks where the old glow used to pulse. It is deliberately unlike
+// the focus app's pill (clear glass capsule, amber glow), so the two read
+// apart at a glance even though both can sit at the top-center of the screen.
+//
+// The helpers below only build and animate views. Where a panel sits, and how
+// blockers stack, stays with showOverlayNotification and reflowBlockers. All
+// of them run on the main thread, and the file is compiled without ARC, so
+// every alloc is paired with a release.
+
+// Today's panel width. Any wider and a top-center overlay would touch the
+// top-right blocker stack on 1280pt-wide screens.
+static const CGFloat kTermWidth = 400;
+static const CGFloat kTermInset = 16;            // left/right text inset
+static const CGFloat kTermLineHeight = 21;       // fixed body line box
+static const NSUInteger kTermMaxBodyLines = 8;   // roughly the old 180pt body cap
+static const NSUInteger kTermTypeTicks = 40;     // 40 ticks x 10ms = 0.4s to type any body
+static const double kTermTypeTick = 0.010;
+static const double kTermBlink = 0.53;
+static NSString *const kTermCursor = @"█";  // full block, drawn as the cursor
+
+static NSColor *termColor(unsigned rgb, CGFloat alpha) {
+    return [NSColor colorWithSRGBRed:((rgb >> 16) & 0xFF) / 255.0
+                               green:((rgb >> 8) & 0xFF) / 255.0
+                                blue:(rgb & 0xFF) / 255.0
+                               alpha:alpha];
+}
+
+// Lays rows out top-down, so each row's position does not depend on the
+// panel's final height (AppKit's default origin is bottom-left).
+@interface TermCanvas : NSView
+@end
+
+@implementation TermCanvas
+- (BOOL)isFlipped { return YES; }
+@end
+
+// Body text with the cursor glyph appended. The cursor is part of the text so
+// TextKit wraps it like any character and it always lands right after the last
+// glyph. Lines wrap at words (a word longer than a line breaks by character)
+// in a fixed 21pt line box. A typed prefix never needs more lines than the
+// full body, so the panel is sized once up front; a half-typed word at a line
+// end may hop down a line while it types, as in any editor.
+static NSAttributedString *termBody(NSString *text, NSColor *textColor, NSColor *cursorColor) {
+    NSFont *font = [NSFont monospacedSystemFontOfSize:14 weight:NSFontWeightRegular];
+    NSMutableParagraphStyle *para = [[NSMutableParagraphStyle alloc] init];
+    para.minimumLineHeight = kTermLineHeight;
+    para.maximumLineHeight = kTermLineHeight;
+    para.lineBreakMode = NSLineBreakByWordWrapping;
+    // TextKit puts a fixed line box's spare height above the glyphs; lift them
+    // by half of it so each line is vertically centred in its box.
+    CGFloat natural = font.ascender - font.descender + font.leading;
+    CGFloat lift = floor((kTermLineHeight - natural) / 2);
+    NSDictionary *attrs = @{
+        NSFontAttributeName: font,
+        NSForegroundColorAttributeName: textColor,
+        NSParagraphStyleAttributeName: para,
+        NSBaselineOffsetAttributeName: @(lift),
+    };
+    NSMutableAttributedString *s = [[NSMutableAttributedString alloc] initWithString:text attributes:attrs];
+    NSMutableDictionary *cursorAttrs = [[attrs mutableCopy] autorelease];
+    cursorAttrs[NSForegroundColorAttributeName] = cursorColor;
+    NSAttributedString *cursor = [[NSAttributedString alloc] initWithString:kTermCursor attributes:cursorAttrs];
+    [s appendAttributedString:cursor];
+    [cursor release];
+    [para release];
+    return [s autorelease];
+}
+
+// Lays the body (cursor included) out at the panel's text width, the same way
+// makeTermBodyView will, and returns its line count. *lastFit receives the
+// index just past the last character on line kTermMaxBodyLines, or the text's
+// length when everything fits.
+static NSUInteger termLayoutBody(NSString *text, NSUInteger *lastFit) {
+    NSTextStorage *storage = [[NSTextStorage alloc] initWithAttributedString:
+        termBody(text, [NSColor whiteColor], [NSColor whiteColor])];
+    NSTextContainer *container = [[NSTextContainer alloc] initWithSize:NSMakeSize(kTermWidth - 2 * kTermInset, CGFLOAT_MAX)];
+    NSLayoutManager *layout = [[NSLayoutManager alloc] init];
+    container.lineFragmentPadding = 0;
+    [layout addTextContainer:container];
+    [storage addLayoutManager:layout];
+    __block NSUInteger lines = 0;
+    __block NSUInteger fit = text.length;
+    [layout enumerateLineFragmentsForGlyphRange:[layout glyphRangeForTextContainer:container]
+                                     usingBlock:^(NSRect rect, NSRect usedRect, NSTextContainer *tc,
+                                                  NSRange glyphRange, BOOL *stop) {
+        lines++;
+        if (lines == kTermMaxBodyLines) {
+            fit = MIN(text.length, NSMaxRange([layout characterRangeForGlyphRange:glyphRange actualGlyphRange:NULL]));
+        }
+    }];
+    [storage release];
+    [container release];
+    [layout release];
+    if (lastFit) *lastFit = fit;
+    return lines < 1 ? 1 : lines;
+}
+
+// Fits the body into kTermMaxBodyLines and returns its height. Longer text is
+// cut at a composed-character boundary and ends in "…", so the cursor stays on
+// screen instead of being clipped with the overflow. *fitted receives the text
+// to display.
+static CGFloat termFitBody(NSString *text, NSString **fitted) {
+    NSUInteger cut = 0;
+    NSUInteger lines = termLayoutBody(text, &cut);
+    if (lines <= kTermMaxBodyLines) {
+        *fitted = text;
+        return lines * kTermLineHeight;
+    }
+    // Start from the end of the last line that fits and give back a composed
+    // character at a time until the cut text, "…" and the cursor fit. That
+    // takes a few steps: "…█" glues onto the cut word, so the word has to shrink
+    // until it fits on the line, and wide glyphs (emoji, CJK) need more room.
+    NSString *candidate = @"…";
+    while (cut > 0) {
+        cut = [text rangeOfComposedCharacterSequenceAtIndex:cut - 1].location;
+        candidate = [[text substringToIndex:cut] stringByAppendingString:@"…"];
+        if (termLayoutBody(candidate, NULL) <= kTermMaxBodyLines) break;
+    }
+    *fitted = candidate;
+    return kTermMaxBodyLines * kTermLineHeight;
+}
+
+// A non-editable text view for the body, laid out exactly like the measurement
+// above (no container padding or inset). It must be TextKit 1: a default
+// NSTextView uses TextKit 2, which can wrap the same string onto a different
+// number of lines than the NSLayoutManager in termLayoutBody, spilling the
+// last line into the padding. Returns an autoreleased view.
+static NSTextView *makeTermBodyView(NSRect frame, NSAttributedString *initial) {
+    NSTextView *view = [NSTextView textViewUsingTextLayoutManager:NO];
+    view.frame = frame;
+    view.drawsBackground = NO;
+    view.editable = NO;
+    view.selectable = NO;
+    view.horizontallyResizable = NO;
+    view.verticallyResizable = NO;
+    view.textContainerInset = NSZeroSize;
+    view.textContainer.lineFragmentPadding = 0;
+    view.textContainer.widthTracksTextView = YES;
+    [view.textStorage setAttributedString:initial];
+    return view;
+}
+
+// A one-line header label. Callers size rows from fittingSize, so line breaks
+// in the text (a --source can contain them) are flattened to spaces first;
+// otherwise the label would grow downward over the body.
+static NSTextField *termLabel(NSString *text, CGFloat size, NSFontWeight weight, NSColor *color) {
+    NSString *oneLine = [[text componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]
+                         componentsJoinedByString:@" "];
+    NSTextField *label = [NSTextField labelWithString:oneLine];
+    label.font = [NSFont monospacedSystemFontOfSize:size weight:weight];
+    label.textColor = color;
+    label.lineBreakMode = NSLineBreakByTruncatingTail;
+    label.maximumNumberOfLines = 1;
+    return label;
+}
+
+// Rounded-rect mask for the blur. NSVisualEffectView ignores layer corner
+// radii when blending behind the window, so the shape has to come from a
+// stretchable mask image; the window shadow follows the same shape.
+static NSImage *termCornerMask(CGFloat radius) {
+    CGFloat edge = radius * 2 + 1;
+    NSImage *mask = [NSImage imageWithSize:NSMakeSize(edge, edge) flipped:NO drawingHandler:^BOOL(NSRect rect) {
+        [[NSColor blackColor] setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:radius yRadius:radius] fill];
+        return YES;
+    }];
+    mask.capInsets = NSEdgeInsetsMake(radius, radius, radius, radius);
+    mask.resizingMode = NSImageResizingModeStretch;
+    return mask;
+}
+
+// The slab: dark HUD blur with the tinted fill and 1pt rim on top. Returns the
+// panel's content view (+1); *canvasOut receives the top-down view to lay rows
+// out in (owned by the returned view).
+static NSVisualEffectView *makeTermSurface(NSSize size, NSColor *fill, NSColor *rim, TermCanvas **canvasOut) {
+    NSRect bounds = NSMakeRect(0, 0, size.width, size.height);
+    NSVisualEffectView *surface = [[NSVisualEffectView alloc] initWithFrame:bounds];
+    surface.material = NSVisualEffectMaterialHUDWindow;
+    surface.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+    // These panels never become key; "follows window" would draw the blur as
+    // permanently inactive.
+    surface.state = NSVisualEffectStateActive;
+    surface.maskImage = termCornerMask(4);
+
+    TermCanvas *canvas = [[TermCanvas alloc] initWithFrame:bounds];
+    canvas.wantsLayer = YES;
+    canvas.layer.backgroundColor = fill.CGColor;
+    canvas.layer.cornerRadius = 4;
+    canvas.layer.masksToBounds = YES;
+    // A layer border draws above sublayers, so the rim also edges the
+    // blocker's red strip.
+    canvas.layer.borderColor = rim.CGColor;
+    canvas.layer.borderWidth = 1;
+    [surface addSubview:canvas];
+    [canvas release];
+    *canvasOut = canvas;
+    return surface;
+}
+
+// Borderless, non-activating panel above the menu bar on every Space. Pinned
+// to dark so the slab looks the same whatever the system appearance. The
+// window shadow replaces the old layer glow: a layer shadow on the content
+// view would be clipped at the window's edge. Returns +1 (NSPanel defaults to
+// releasedWhenClosed = NO, so callers close and then release).
+static NSPanel *makeTermPanel(NSRect frame) {
+    NSPanel *panel = [[NSPanel alloc]
+        initWithContentRect:frame
+        styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
+        backing:NSBackingStoreBuffered
+        defer:NO];
+    panel.level = NSStatusWindowLevel + 1;
+    panel.opaque = NO;
+    panel.backgroundColor = [NSColor clearColor];
+    panel.hasShadow = YES;
+    panel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
+                               NSWindowCollectionBehaviorStationary |
+                               NSWindowCollectionBehaviorFullScreenAuxiliary;
+    panel.hidesOnDeactivate = NO;
+    panel.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+    return panel;
+}
+
+// Blinks the trailing cursor glyph until alive() turns false. Same guard
+// contract the glow pulse had: the overlay ties alive to its panel and
+// generation, blockers to registry membership, so a blink never touches a
+// torn-down panel. The scheduled block retains the text view until it runs.
+static void blinkCursor(NSTextView *body, NSColor *color, BOOL visible, BOOL (^alive)(void)) {
+    if (!alive()) return;
+    NSTextStorage *storage = body.textStorage;
+    NSUInteger length = storage.length;
+    if (length > 0) {
+        [storage addAttribute:NSForegroundColorAttributeName
+                        value:(visible ? color : [NSColor clearColor])
+                        range:NSMakeRange(length - kTermCursor.length, kTermCursor.length)];
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kTermBlink * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        blinkCursor(body, color, !visible, alive);
+    });
+}
+
+// Types the body in, a few characters per 10ms tick, so any length finishes
+// within kTermTypeTicks ticks (0.4s) and long messages keep the full
+// overlay_timeout on screen. The cursor rides along at the end of the typed
+// text. Calls done once everything is shown, unless alive() went false first.
+static void typeBody(NSTextView *body, NSString *text, NSColor *textColor, NSColor *cursorColor,
+                     NSUInteger shown, BOOL (^alive)(void), void (^done)(void)) {
+    if (!alive()) return;
+    NSUInteger total = text.length;
+    NSUInteger step = (total + kTermTypeTicks - 1) / kTermTypeTicks;
+    if (step < 1) step = 1;
+    shown += step;
+    if (shown < total) {
+        // Never split a surrogate pair or a composed character mid-glyph.
+        shown = NSMaxRange([text rangeOfComposedCharacterSequenceAtIndex:shown - 1]);
+    }
+    if (shown > total) shown = total;
+    [body.textStorage setAttributedString:termBody([text substringToIndex:shown], textColor, cursorColor)];
+    if (shown >= total) {
+        done();
+        return;
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kTermTypeTick * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        typeBody(body, text, textColor, cursorColor, shown, alive, done);
+    });
+}
+
+static NSString *termTimestamp(void) {
+    static NSDateFormatter *formatter = nil;
+    if (formatter == nil) {
+        formatter = [[NSDateFormatter alloc] init];
+        formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+        formatter.dateFormat = @"HH:mm:ss";
+    }
+    return [formatter stringFromDate:[NSDate date]];
+}
+
+// The blocker's close mark: an 8pt ✕ drawn as two strokes.
+static NSImage *termCloseGlyph(NSColor *color) {
+    return [NSImage imageWithSize:NSMakeSize(8, 8) flipped:NO drawingHandler:^BOOL(NSRect rect) {
+        NSBezierPath *path = [NSBezierPath bezierPath];
+        [path moveToPoint:NSMakePoint(1, 1)];
+        [path lineToPoint:NSMakePoint(7, 7)];
+        [path moveToPoint:NSMakePoint(7, 1)];
+        [path lineToPoint:NSMakePoint(1, 7)];
+        path.lineWidth = 1.7;
+        path.lineCapStyle = NSLineCapStyleSquare;
+        [color setStroke];
+        [path stroke];
+        return YES;
+    }];
+}
+
 // --- Overlay Window ---
 
 static NSPanel *_overlayPanel = nil;
 static int _overlayGeneration = 0;
-
-// Breathing glow animation. The alive block decides when the loop stops: the
-// overlay ties it to its singleton panel/generation, blockers to membership in
-// the blocker registry — so a pulse never touches a torn-down panel.
-static void pulseGlow(CALayer *layer, BOOL (^alive)(void)) {
-    if (!alive()) return;
-
-    BOOL expand = (layer.shadowRadius < 15);
-    CGFloat targetRadius = expand ? 20 : 8;
-    float targetOpacity = expand ? 0.9 : 0.4;
-
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
-        ctx.duration = 1.0;
-        ctx.allowsImplicitAnimation = YES;
-        layer.shadowRadius = targetRadius;
-        layer.shadowOpacity = targetOpacity;
-    } completionHandler:^{
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            pulseGlow(layer, alive);
-        });
-    }];
-}
-
-// Wrapped height of body text at the given content width, clamped to [20, maxHeight].
-static CGFloat measureBodyHeight(NSString *body, NSFont *font, CGFloat width, CGFloat maxHeight) {
-    NSTextStorage *textStorage = [[NSTextStorage alloc] initWithString:body
-                                                           attributes:@{NSFontAttributeName: font}];
-    NSTextContainer *textContainer = [[NSTextContainer alloc] initWithSize:NSMakeSize(width, CGFLOAT_MAX)];
-    NSLayoutManager *layoutManager = [[NSLayoutManager alloc] init];
-    textContainer.lineFragmentPadding = 0;
-    textContainer.lineBreakMode = NSLineBreakByCharWrapping;
-    [layoutManager addTextContainer:textContainer];
-    [textStorage addLayoutManager:layoutManager];
-    [layoutManager glyphRangeForTextContainer:textContainer];
-    CGFloat h = ceil([layoutManager usedRectForTextContainer:textContainer].size.height);
-    [textStorage release];
-    [textContainer release];
-    [layoutManager release];
-    if (h < 20) h = 20;
-    if (h > maxHeight) h = maxHeight;
-    return h;
-}
 
 void showOverlayNotification(const char *title, const char *body, double timeout) {
     char *titleCopy = strdup(title);
@@ -137,77 +391,60 @@ void showOverlayNotification(const char *title, const char *body, double timeout
         free(titleCopy);
         free(bodyCopy);
 
-        CGFloat width = 400;
-        CGFloat pad = 20;
-        CGFloat contentWidth = width - pad * 2;
-        CGFloat titleHeight = 20;
-        CGFloat titleTopPad = 14;
-        CGFloat bodyTopPad = 6;
-        CGFloat bodyBottomPad = 14;
-        CGFloat maxBodyHeight = 180;
+        CGFloat headerTop = 12;
+        CGFloat headerHeight = 18;
+        CGFloat bodyTop = headerTop + headerHeight + 8;
+        CGFloat bottomPad = 14;
+        NSString *shownBody = nil;
+        CGFloat bodyHeight = termFitBody(bodyStr, &shownBody);
+        CGFloat height = bodyTop + bodyHeight + bottomPad;
 
-        NSFont *bodyFont = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
-        CGFloat bodyHeight = measureBodyHeight(bodyStr, bodyFont, contentWidth, maxBodyHeight);
-
-        CGFloat height = titleTopPad + titleHeight + bodyTopPad + bodyHeight + bodyBottomPad;
-
+        // Today's slot: centred, 8pt under the menu bar.
         NSScreen *screen = [NSScreen mainScreen];
         NSRect visibleFrame = screen.visibleFrame;
-        CGFloat x = NSMidX(visibleFrame) - width / 2;
+        CGFloat x = NSMidX(visibleFrame) - kTermWidth / 2;
         CGFloat y = NSMaxY(visibleFrame) - height - 8;
 
-        NSRect frame = NSMakeRect(x, y, width, height);
-        _overlayPanel = [[NSPanel alloc]
-            initWithContentRect:frame
-            styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
-            backing:NSBackingStoreBuffered
-            defer:NO];
-
-        _overlayPanel.level = NSStatusWindowLevel + 1;
-        _overlayPanel.opaque = NO;
-        _overlayPanel.backgroundColor = [NSColor clearColor];
-        _overlayPanel.hasShadow = NO;
-        _overlayPanel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
-                                           NSWindowCollectionBehaviorStationary |
-                                           NSWindowCollectionBehaviorFullScreenAuxiliary;
+        _overlayPanel = makeTermPanel(NSMakeRect(x, y, kTermWidth, height));
         _overlayPanel.ignoresMouseEvents = YES;
-        _overlayPanel.hidesOnDeactivate = NO;
 
-        NSView *contentView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, width, height)];
-        contentView.wantsLayer = YES;
-        contentView.layer.cornerRadius = 12;
-        contentView.layer.backgroundColor = [[NSColor colorWithWhite:0.08 alpha:0.95] CGColor];
-        contentView.layer.borderColor = [[NSColor colorWithRed:0 green:0.85 blue:1.0 alpha:0.6] CGColor];
-        contentView.layer.borderWidth = 1.5;
-        contentView.layer.shadowColor = [[NSColor colorWithRed:0 green:0.85 blue:1.0 alpha:1.0] CGColor];
-        contentView.layer.shadowRadius = 8;
-        contentView.layer.shadowOpacity = 0.4;
-        contentView.layer.shadowOffset = CGSizeMake(0, 0);
+        NSColor *green = termColor(0x4DFF88, 1.0);
+        NSColor *bodyColor = termColor(0xE9F5EC, 1.0);
+        TermCanvas *canvas = nil;
+        NSVisualEffectView *surface = makeTermSurface(NSMakeSize(kTermWidth, height),
+                                                      termColor(0x060908, 0.91),
+                                                      termColor(0x4DFF88, 0.35), &canvas);
 
-        NSTextField *titleLabel = [NSTextField labelWithString:titleStr];
-        titleLabel.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
-        titleLabel.textColor = [NSColor colorWithWhite:0.55 alpha:1.0];
-        titleLabel.frame = NSMakeRect(pad, height - titleTopPad - titleHeight, contentWidth, titleHeight);
-        titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
-        [contentView addSubview:titleLabel];
+        // Header: send time on the right, source as an inverse-video tag on the
+        // left, truncated so it never runs into the time.
+        NSTextField *timeLabel = termLabel(termTimestamp(), 11, NSFontWeightRegular, termColor(0x4DFF88, 0.5));
+        NSSize timeSize = timeLabel.fittingSize;
+        // Labels pad their text by 2pt per side; offset so the glyphs, not the
+        // label frames, line up with the 16pt inset.
+        timeLabel.frame = NSMakeRect(kTermWidth - kTermInset + 2 - timeSize.width,
+                                     headerTop + (headerHeight - timeSize.height) / 2,
+                                     timeSize.width, timeSize.height);
+        [canvas addSubview:timeLabel];
 
-        NSTextView *bodyText = [[NSTextView alloc] initWithFrame:NSMakeRect(pad, bodyBottomPad, contentWidth, bodyHeight)];
-        [bodyText setString:bodyStr];
-        bodyText.font = bodyFont;
-        bodyText.textColor = [NSColor whiteColor];
-        bodyText.backgroundColor = [NSColor clearColor];
-        bodyText.drawsBackground = NO;
-        bodyText.editable = NO;
-        bodyText.selectable = NO;
-        bodyText.horizontallyResizable = NO;
-        bodyText.verticallyResizable = NO;
-        bodyText.textContainerInset = NSMakeSize(0, 0);
-        bodyText.textContainer.lineBreakMode = NSLineBreakByCharWrapping;
-        bodyText.textContainer.widthTracksTextView = YES;
-        [contentView addSubview:bodyText];
-        [bodyText release];
+        NSTextField *sourceLabel = termLabel(titleStr, 11.5, NSFontWeightBold, termColor(0x04140A, 1.0));
+        NSSize sourceSize = sourceLabel.fittingSize;
+        CGFloat tagWidth = MIN(sourceSize.width + 8, NSMinX(timeLabel.frame) - 12 - kTermInset);
+        NSView *tag = [[NSView alloc] initWithFrame:NSMakeRect(kTermInset, headerTop, tagWidth, headerHeight)];
+        tag.wantsLayer = YES;
+        tag.layer.backgroundColor = green.CGColor;
+        tag.layer.cornerRadius = 2;
+        sourceLabel.frame = NSMakeRect(4, (headerHeight - sourceSize.height) / 2, tagWidth - 8, sourceSize.height);
+        [tag addSubview:sourceLabel];
+        [canvas addSubview:tag];
+        [tag release];
 
-        _overlayPanel.contentView = contentView;
+        // Body starts as just the cursor and types in below.
+        NSTextView *bodyView = makeTermBodyView(NSMakeRect(kTermInset, bodyTop, kTermWidth - 2 * kTermInset, bodyHeight),
+                                                termBody(@"", bodyColor, green));
+        [canvas addSubview:bodyView];
+
+        _overlayPanel.contentView = surface;
+        [surface release];
 
         // Fade in
         _overlayPanel.alphaValue = 0;
@@ -217,9 +454,13 @@ void showOverlayNotification(const char *title, const char *body, double timeout
             _overlayPanel.animator.alphaValue = 1.0;
         }];
 
-        // Start glow pulse
-        pulseGlow(contentView.layer, ^BOOL(void) {
+        // Type the body, then blink the cursor until this overlay is replaced
+        // or dismissed.
+        BOOL (^alive)(void) = ^BOOL(void) {
             return _overlayPanel != nil && _overlayGeneration == gen;
+        };
+        typeBody(bodyView, shownBody, bodyColor, green, 0, alive, ^{
+            blinkCursor(bodyView, green, YES, alive);
         });
 
         // Auto-dismiss
@@ -243,8 +484,9 @@ void showOverlayNotification(const char *title, const char *body, double timeout
 
 // --- Blocker Windows ---
 //
-// Persistent variants of the overlay: red glow, stacked vertically down the
-// right edge, each stays on screen until the user clicks its × (or `clear`
+// Persistent variants of the overlay: the same terminal slab with a red
+// "■ BLOCKED" header strip, stacked vertically down the right edge. Each stays
+// on screen, its red cursor blinking, until the user clicks its ✕ (or `clear`
 // dismisses the whole stack). A new --blocker send takes the top slot and the
 // existing stack slides down; closing one lets the panels below slide back up.
 // Unlike the overlay they accept mouse events for the close button; the
@@ -276,8 +518,8 @@ static void reflowBlockers(void) {
 }
 
 // Fade out and tear down one blocker. Removing its token from the registry
-// first stops its glow pulse (the pulse guards on registry membership) before
-// the panel is released, so the pulse never touches a freed layer. The
+// first stops its cursor blink (the blink guards on registry membership)
+// before the panel is released, so the blink never touches a freed view. The
 // completion block retains the panel through the fade, then releases the
 // final alloc reference. Main thread only.
 static void closeBlocker(NSNumber *tok) {
@@ -339,99 +581,82 @@ void showBlockerNotification(const char *title, const char *body) {
         free(titleCopy);
         free(bodyCopy);
 
-        CGFloat width = 400;
-        CGFloat pad = 20;
-        CGFloat closeSize = 22;
-        CGFloat contentWidth = width - pad * 2;
-        CGFloat titleHeight = 20;
-        CGFloat titleTopPad = 14;
-        CGFloat bodyTopPad = 6;
-        CGFloat bodyBottomPad = 14;
-        CGFloat maxBodyHeight = 180;
+        CGFloat stripHeight = 26;
+        CGFloat bodyTop = stripHeight + 11;
+        CGFloat bottomPad = 14;
+        CGFloat closeSize = 20;
+        NSString *shownBody = nil;
+        CGFloat bodyHeight = termFitBody(bodyStr, &shownBody);
+        CGFloat height = bodyTop + bodyHeight + bottomPad;
 
-        NSFont *bodyFont = [NSFont systemFontOfSize:14 weight:NSFontWeightSemibold];
-        CGFloat bodyHeight = measureBodyHeight(bodyStr, bodyFont, contentWidth, maxBodyHeight);
-
-        CGFloat height = titleTopPad + titleHeight + bodyTopPad + bodyHeight + bodyBottomPad;
-
+        // Provisional frame in the top slot; reflowBlockers below places it.
         NSScreen *screen = [NSScreen mainScreen];
         NSRect visibleFrame = screen.visibleFrame;
         CGFloat margin = 16;
-        CGFloat x = NSMaxX(visibleFrame) - width - margin;
+        CGFloat x = NSMaxX(visibleFrame) - kTermWidth - margin;
         CGFloat y = NSMaxY(visibleFrame) - height - 8;
+        NSPanel *panel = makeTermPanel(NSMakeRect(x, y, kTermWidth, height));
 
-        NSRect frame = NSMakeRect(x, y, width, height);
-        NSPanel *panel = [[NSPanel alloc]
-            initWithContentRect:frame
-            styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
-            backing:NSBackingStoreBuffered
-            defer:NO];
+        // The blocked red: one notch softer than a pure alarm red so it does
+        // not glare for as long as a blocker stays up, yet still reads as
+        // "blocked". It colors the strip, the cursor and, dimmed, the rim.
+        NSColor *red = termColor(0xE04A3F, 1.0);
+        NSColor *ink = termColor(0x140202, 1.0);
+        TermCanvas *canvas = nil;
+        NSVisualEffectView *surface = makeTermSurface(NSMakeSize(kTermWidth, height),
+                                                      termColor(0x0A0606, 0.92),
+                                                      termColor(0xE5574F, 0.5), &canvas);
 
-        panel.level = NSStatusWindowLevel + 1;
-        panel.opaque = NO;
-        panel.backgroundColor = [NSColor clearColor];
-        panel.hasShadow = NO;
-        panel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
-                                   NSWindowCollectionBehaviorStationary |
-                                   NSWindowCollectionBehaviorFullScreenAuxiliary;
-        panel.hidesOnDeactivate = NO;
+        // Header strip: "■ BLOCKED", the source, and the close box.
+        NSView *strip = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, kTermWidth, stripHeight)];
+        strip.wantsLayer = YES;
+        strip.layer.backgroundColor = red.CGColor;
+        [canvas addSubview:strip];
+        [strip release];
 
-        NSColor *redGlow = [NSColor colorWithRed:1.0 green:0.23 blue:0.19 alpha:1.0];
+        NSRect closeFrame = NSMakeRect(kTermWidth - 6 - closeSize, (stripHeight - closeSize) / 2, closeSize, closeSize);
+        NSView *closeBox = [[NSView alloc] initWithFrame:closeFrame];
+        closeBox.wantsLayer = YES;
+        closeBox.layer.backgroundColor = [ink colorWithAlphaComponent:0.15].CGColor;
+        closeBox.layer.cornerRadius = 2;
+        [canvas addSubview:closeBox];
+        [closeBox release];
 
-        NSView *contentView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, width, height)];
-        contentView.wantsLayer = YES;
-        contentView.layer.cornerRadius = 12;
-        contentView.layer.backgroundColor = [[NSColor colorWithWhite:0.08 alpha:0.95] CGColor];
-        contentView.layer.borderColor = [[redGlow colorWithAlphaComponent:0.7] CGColor];
-        contentView.layer.borderWidth = 1.5;
-        contentView.layer.shadowColor = [redGlow CGColor];
-        contentView.layer.shadowRadius = 8;
-        contentView.layer.shadowOpacity = 0.5;
-        contentView.layer.shadowOffset = CGSizeMake(0, 0);
+        NSTextField *flagLabel = termLabel(@"■ BLOCKED", 11.5, NSFontWeightBold, ink);
+        NSSize flagSize = flagLabel.fittingSize;
+        flagLabel.frame = NSMakeRect(kTermInset - 2, (stripHeight - flagSize.height) / 2, flagSize.width, flagSize.height);
+        [canvas addSubview:flagLabel];
 
-        NSTextField *titleLabel = [NSTextField labelWithString:titleStr];
-        titleLabel.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
-        titleLabel.textColor = [NSColor colorWithWhite:0.55 alpha:1.0];
-        // Reserve the top-right corner for the close button.
-        titleLabel.frame = NSMakeRect(pad, height - titleTopPad - titleHeight, contentWidth - closeSize - 4, titleHeight);
-        titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
-        [contentView addSubview:titleLabel];
+        NSTextField *sourceLabel = termLabel(titleStr, 11.5, NSFontWeightRegular, [ink colorWithAlphaComponent:0.7]);
+        NSSize sourceSize = sourceLabel.fittingSize;
+        CGFloat sourceX = NSMaxX(flagLabel.frame) + 6;
+        sourceLabel.frame = NSMakeRect(sourceX, (stripHeight - sourceSize.height) / 2,
+                                       MIN(sourceSize.width, NSMinX(closeFrame) - 8 - sourceX), sourceSize.height);
+        [canvas addSubview:sourceLabel];
 
-        NSTextView *bodyText = [[NSTextView alloc] initWithFrame:NSMakeRect(pad, bodyBottomPad, contentWidth, bodyHeight)];
-        [bodyText setString:bodyStr];
-        bodyText.font = bodyFont;
-        bodyText.textColor = [NSColor whiteColor];
-        bodyText.backgroundColor = [NSColor clearColor];
-        bodyText.drawsBackground = NO;
-        bodyText.editable = NO;
-        bodyText.selectable = NO;
-        bodyText.horizontallyResizable = NO;
-        bodyText.verticallyResizable = NO;
-        bodyText.textContainerInset = NSMakeSize(0, 0);
-        bodyText.textContainer.lineBreakMode = NSLineBreakByCharWrapping;
-        bodyText.textContainer.widthTracksTextView = YES;
-        [contentView addSubview:bodyText];
-        [bodyText release];
-
-        NSButton *closeButton = [[NSButton alloc] initWithFrame:NSMakeRect(width - closeSize - 6, height - closeSize - 6, closeSize, closeSize)];
+        NSButton *closeButton = [[NSButton alloc] initWithFrame:closeFrame];
         closeButton.bordered = NO;
-        [closeButton setButtonType:NSButtonTypeMomentaryChange];
-        NSMutableParagraphStyle *centered = [[NSMutableParagraphStyle alloc] init];
-        centered.alignment = NSTextAlignmentCenter;
-        closeButton.attributedTitle = [[[NSAttributedString alloc] initWithString:@"✕" attributes:@{
-            NSForegroundColorAttributeName: [NSColor colorWithWhite:0.75 alpha:1.0],
-            NSFontAttributeName: [NSFont systemFontOfSize:15 weight:NSFontWeightBold],
-            NSParagraphStyleAttributeName: centered,
-        }] autorelease];
-        [centered release];
+        [closeButton setButtonType:NSButtonTypeMomentaryPushIn];
+        closeButton.title = @"";
+        closeButton.image = termCloseGlyph(ink);
+        closeButton.imagePosition = NSImageOnly;
+        // The glyph is an image, so VoiceOver needs a name for the control.
+        closeButton.accessibilityLabel = @"Dismiss blocker";
         closeButton.tag = ++_blockerNextToken;
         NSNumber *tok = [NSNumber numberWithInteger:closeButton.tag];
         closeButton.target = _blockerController;
         closeButton.action = @selector(dismiss:);
-        [contentView addSubview:closeButton];
+        [canvas addSubview:closeButton];
         [closeButton release];
 
-        panel.contentView = contentView;
+        // A blocker is read at once, so its body appears whole (no typing).
+        NSColor *cursorColor = red;
+        NSTextView *bodyView = makeTermBodyView(NSMakeRect(kTermInset, bodyTop, kTermWidth - 2 * kTermInset, bodyHeight),
+                                                termBody(shownBody, termColor(0xF6ECEC, 1.0), cursorColor));
+        [canvas addSubview:bodyView];
+
+        panel.contentView = surface;
+        [surface release];
 
         // New blocker takes the top slot; reflow slides the older ones down.
         [_blockerOrder insertObject:tok atIndex:0];
@@ -445,8 +670,8 @@ void showBlockerNotification(const char *title, const char *body) {
             panel.animator.alphaValue = 1.0;
         }];
 
-        // Persistent: glow pulses until dismissed; no auto-dismiss timer.
-        pulseGlow(contentView.layer, ^BOOL(void) {
+        // Persistent: the cursor blinks until dismissed; no auto-dismiss timer.
+        blinkCursor(bodyView, cursorColor, YES, ^BOOL(void) {
             return [_blockerPanels objectForKey:tok] != nil;
         });
 
