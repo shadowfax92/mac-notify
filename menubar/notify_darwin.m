@@ -51,6 +51,27 @@ void sendDarwinNotification(const char *title, const char *body, const char *ide
         }];
 }
 
+// These run in the bundled daemon, whose notification center owns the requests.
+// Cancel pending requests too so they cannot appear after dismissal. The local
+// pools also cover calls from IPC goroutines without a Cocoa autorelease pool.
+void clearDarwinNotifications(void) {
+    @autoreleasepool {
+        UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+        [center removeAllPendingNotificationRequests];
+        [center removeAllDeliveredNotifications];
+    }
+}
+
+void removeDarwinNotification(const char *identifier) {
+    @autoreleasepool {
+        NSString *ident = [NSString stringWithUTF8String:identifier];
+        NSArray *identifiers = @[ident];
+        UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+        [center removePendingNotificationRequestsWithIdentifiers:identifiers];
+        [center removeDeliveredNotificationsWithIdentifiers:identifiers];
+    }
+}
+
 // --- Overlay Window ---
 
 static NSPanel *_overlayPanel = nil;
