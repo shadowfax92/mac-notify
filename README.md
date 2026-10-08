@@ -15,8 +15,8 @@ A lightweight CLI that puts notification messages in your macOS menu bar. Messag
 - **Click to dismiss** — click any message in the dropdown to remove it
 - **Upsert by ID** — update an existing message in-place with `--id`
 - **Source tagging** — `--source ci` to know where it came from
-- **Overlay popup** — floating panel with pulsing cyan glow, auto-dismisses after 5s
-- **Blocker mode** — `--blocker` pins persistent red-glow panels to the right edge, stacked vertically, each staying until you click its ✕
+- **Overlay popup** — dark terminal-style panel with green accents and a blinking cursor, auto-dismisses after 5s
+- **Blocker mode** — `-b` / `--blocker` pins persistent dark terminal-style panels to the top-right, each with a red **■ BLOCKED** strip and its own ✕ to dismiss
 - **Menu bar flash** — message text appears in the menu bar for 2s on each send
 - **Native notifications** — macOS banner alerts with sound (configurable)
 - **Daemon auto-start** — installs as a launchd service, runs on login
@@ -54,6 +54,7 @@ make uninstall
 mac-notify send "hello world"
 mac-notify send "build passed" --source ci
 mac-notify send "deploying v2" --source deploy --id deploy-status
+mac-notify send -b "blocked — waiting for approval"
 mac-notify send "$MESSAGE"
 mac-notify list
 mac-notify clear
@@ -65,7 +66,8 @@ mac-notify clear
 mac-notify send [message]      # send a notification
 mac-notify send "msg" --source ci   # tag with source
 mac-notify send "msg" --id build    # upsert by ID
-mac-notify send "msg" --blocker     # persistent red blocker (dismiss with ✕)
+mac-notify send "msg" --blocker     # persistent terminal blocker (dismiss with ✕)
+mac-notify send "msg" -b            # shorthand for --blocker
 mac-notify list                # show current messages
 mac-notify clear               # clear messages and macOS Notification Center
 mac-notify status              # check if daemon is running
@@ -80,7 +82,7 @@ mac-notify daemon              # run daemon in foreground (for debugging)
 |------|---------|-------------|
 | `--source` | `send` | Origin label (e.g. `ci`, `build`, `deploy`) |
 | `--id` | `send` | Message ID for upsert — replaces existing message with same ID |
-| `--blocker` | `send` | Show a persistent red-glow panel on the right edge until dismissed with ✕ |
+| `-b`, `--blocker` | `send` | Show a persistent dark terminal-style panel with a red **■ BLOCKED** strip in the top-right stack until dismissed with ✕ |
 
 ## Menu Bar
 
@@ -107,17 +109,19 @@ message leaves blocker panels open; their **✕** buttons only close the panels.
   <img src="assets/overlay.png" alt="overlay notification" width="400" />
 </p>
 
-Each `send` shows a floating dark panel just below the menu bar with a pulsing cyan glow border. It fades in, glows for 5 seconds, and fades out. New messages replace the current overlay.
+Each non-blocker `send` shows a floating dark terminal-style panel centered just below the menu bar. It uses green accents, types in the message, and blinks a block cursor. It fades in and auto-dismisses after 5 seconds by default. New messages replace the current overlay.
 
 ## Blocker Mode
 
 ```sh
 mac-notify send --blocker "Deploy is frozen — resolve the conflict before continuing"
+# Equivalent shorthand:
+mac-notify send -b "Deploy is frozen — resolve the conflict before continuing"
 ```
 
-For things that must not scroll away, `--blocker` shows a **persistent** panel pinned to the **right edge** of the screen with a pulsing **red** glow. Unlike the overlay it never auto-dismisses — it stays until you click the **✕** in its corner. Blockers **stack vertically**: a new `--blocker` send takes the top slot and the existing ones slide down, each dismissed individually with its own ✕ (panels below slide back up). `mac-notify clear` dismisses the whole stack.
+For things that must not scroll away, `-b` (or `--blocker`) shows a **persistent dark terminal-style panel** at the **top-right** of the screen with a red **■ BLOCKED** header strip and a blinking red cursor. It never auto-dismisses — it stays until you click the **✕** in its corner. Blockers **stack vertically**: a new blocker send takes the top slot and the existing ones slide down, each dismissed individually with its own ✕ (panels below slide back up). `mac-notify clear` dismisses the whole stack.
 
-The send is otherwise normal: it still queues in the menu bar list and (when enabled) fires a system notification. `--blocker` just swaps the transient overlay for the persistent red panel, and is shown even if `overlay_notifications` is disabled.
+The send is otherwise normal: it still queues in the menu bar list and (when enabled) fires a system notification. `-b` and `--blocker` swap the transient overlay for the persistent terminal panel, which is shown even if `overlay_notifications` is disabled.
 
 ## Menu Bar Flash
 
@@ -146,7 +150,7 @@ overlay_timeout: 5
 | Key | Default | Description |
 |-----|---------|-------------|
 | `system_notifications` | `true` | Show native macOS notification banners |
-| `overlay_notifications` | `true` | Show floating overlay popup with glow |
+| `overlay_notifications` | `true` | Show floating terminal-style overlay popup |
 | `menu_flash` | `true` | Flash message text in menu bar for 2s |
 | `overlay_timeout` | `5` | Overlay auto-dismiss timeout in seconds |
 
@@ -219,7 +223,7 @@ send:
 ```
 mac-notify send "msg"  ──→  Unix socket IPC  ──→  daemon (menu bar app)
                             ~/.mac-notify.sock       ├─ menuet menu bar
-                                                     ├─ overlay popup (NSPanel + glow)
+                                                     ├─ overlay popup (terminal-style NSPanel)
                                                      └─ UNUserNotificationCenter
 ```
 

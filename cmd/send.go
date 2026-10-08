@@ -47,6 +47,6 @@ var sendCmd = &cobra.Command{
 func init() {
 	sendCmd.Flags().StringVar(&sendSource, "source", "", "Source/origin of the notification (e.g. ci, build)")
 	sendCmd.Flags().StringVar(&sendID, "id", "", "Message ID for upsert (replaces existing message with same ID)")
-	sendCmd.Flags().BoolVar(&sendBlocker, "blocker", false, "Show a persistent red-glow overlay on the right edge until dismissed with ×")
+	sendCmd.Flags().BoolVarP(&sendBlocker, "blocker", "b", false, "Show a persistent dark terminal-style panel with a red ■ BLOCKED strip in the top-right stack until dismissed with ✕")
 	rootCmd.AddCommand(sendCmd)
 }
