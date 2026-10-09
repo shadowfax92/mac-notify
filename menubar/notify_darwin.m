@@ -18,18 +18,24 @@
 static NotifyDelegate *_delegate = nil;
 
 void setupNotificationDelegate(void) {
-    _delegate = [[NotifyDelegate alloc] init];
-    [[UNUserNotificationCenter currentNotificationCenter] setDelegate:_delegate];
+    // Runtime enablement can arrive on the config watcher, outside AppKit's
+    // main-thread autorelease pool. Go serializes setup before enabled sends.
+    @autoreleasepool {
+        _delegate = [[NotifyDelegate alloc] init];
+        [[UNUserNotificationCenter currentNotificationCenter] setDelegate:_delegate];
+    }
 }
 
 void requestNotificationAuth(void) {
-    UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
-    [center requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge)
-                         completionHandler:^(BOOL granted, NSError *error) {
-        if (error) {
-            NSLog(@"mac-notify: auth error: %@", error);
-        }
-    }];
+    @autoreleasepool {
+        UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+        [center requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge)
+                             completionHandler:^(BOOL granted, NSError *error) {
+            if (error) {
+                NSLog(@"mac-notify: auth error: %@", error);
+            }
+        }];
+    }
 }
 
 void sendDarwinNotification(const char *title, const char *body, const char *identifier) {

@@ -24,7 +24,18 @@ type Request struct {
 }
 
 type Response struct {
-	OK       bool      `json:"ok"`
-	Error    string    `json:"error,omitempty"`
-	Messages []Message `json:"messages,omitempty"`
+	OK       bool          `json:"ok"`
+	Error    string        `json:"error,omitempty"`
+	Messages []Message     `json:"messages,omitempty"`
+	Config   *ConfigStatus `json:"config,omitempty"`
+}
+
+// ConfigStatus describes the daemon's active policy, not the current file. A
+// rejected edit remains visible in Error while notifications use these settings.
+type ConfigStatus struct {
+	SystemNotifications  bool    `json:"system_notifications"`
+	OverlayNotifications bool    `json:"overlay_notifications"`
+	MenuFlash            bool    `json:"menu_flash"`
+	OverlayTimeout       float64 `json:"overlay_timeout"`
+	Error                string  `json:"error,omitempty"`
 }

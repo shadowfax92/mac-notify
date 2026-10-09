@@ -10,6 +10,8 @@ package menubar
 import "C"
 import (
 	"fmt"
+	"log"
+	"os"
 	"slices"
 	"sync"
 	"time"
@@ -24,9 +26,13 @@ var (
 	mu         sync.RWMutex
 	messages   []ipc.Message
 	nextID     int
-	cfg        *config.Config
 	flashTimer *time.Timer
 	flashMu    sync.Mutex
+	liveConfig = newRuntimeConfig(
+		func() { C.setupNotificationDelegate() },
+		func() { C.requestNotificationAuth() },
+		log.Printf,
+	)
 )
 
 func HandleRequest(req ipc.Request) ipc.Response {
@@ -37,6 +43,10 @@ func HandleRequest(req ipc.Request) ipc.Response {
 		return handleClear()
 	case "list":
 		return handleList()
+	case "status":
+		resp := handleList()
+		resp.Config = liveConfig.status()
+		return resp
 	case "remove":
 		return handleRemove(req)
 	default:
@@ -51,6 +61,7 @@ func handleSend(req ipc.Request) ipc.Response {
 
 	mu.Lock()
 	defer mu.Unlock()
+	settings := liveConfig.snapshot()
 
 	if req.ID != "" {
 		for i, m := range messages {
@@ -59,9 +70,9 @@ func handleSend(req ipc.Request) ipc.Response {
 				messages[i].Source = req.Source
 				messages[i].Time = time.Now()
 				updateTitle()
-				sendSystemNotification(req.Message, req.Source, req.ID)
-				presentOverlay(req)
-				flashTitle(req.Message, req.Source)
+				sendSystemNotification(settings, req.Message, req.Source, req.ID)
+				presentOverlay(settings, req)
+				flashTitle(settings, req.Message, req.Source)
 				return ipc.Response{OK: true}
 			}
 		}
@@ -80,9 +91,9 @@ func handleSend(req ipc.Request) ipc.Response {
 		Time:   time.Now(),
 	})
 	updateTitle()
-	sendSystemNotification(req.Message, req.Source, id)
-	presentOverlay(req)
-	flashTitle(req.Message, req.Source)
+	sendSystemNotification(settings, req.Message, req.Source, id)
+	presentOverlay(settings, req)
+	flashTitle(settings, req.Message, req.Source)
 	return ipc.Response{OK: true}
 }
 
@@ -130,8 +141,8 @@ func handleRemove(req ipc.Request) ipc.Response {
 	return ipc.Response{OK: true}
 }
 
-func sendSystemNotification(msg, source, id string) {
-	if cfg == nil || !cfg.SystemNotifications {
+func sendSystemNotification(settings config.Config, msg, source, id string) {
+	if !settings.SystemNotifications {
 		return
 	}
 	title := "mac-notify"
@@ -149,16 +160,16 @@ func sendSystemNotification(msg, source, id string) {
 
 // presentOverlay routes a send to the persistent red blocker panel when
 // req.Blocker is set, otherwise to the transient overlay.
-func presentOverlay(req ipc.Request) {
+func presentOverlay(settings config.Config, req ipc.Request) {
 	if req.Blocker {
 		showBlocker(req.Message, req.Source)
 		return
 	}
-	showOverlay(req.Message, req.Source)
+	showOverlay(settings, req.Message, req.Source)
 }
 
-func showOverlay(msg, source string) {
-	if cfg == nil || !cfg.OverlayNotifications {
+func showOverlay(settings config.Config, msg, source string) {
+	if !settings.OverlayNotifications {
 		return
 	}
 	title := "mac-notify"
@@ -169,7 +180,7 @@ func showOverlay(msg, source string) {
 	cBody := C.CString(msg)
 	defer C.free(unsafe.Pointer(cTitle))
 	defer C.free(unsafe.Pointer(cBody))
-	timeout := cfg.OverlayTimeout
+	timeout := settings.OverlayTimeout
 	if timeout <= 0 {
 		timeout = 5
 	}
@@ -190,8 +201,8 @@ func showBlocker(msg, source string) {
 	C.showBlockerNotification(cTitle, cBody)
 }
 
-func flashTitle(msg, source string) {
-	if cfg == nil || !cfg.MenuFlash {
+func flashTitle(settings config.Config, msg, source string) {
+	if !settings.MenuFlash {
 		return
 	}
 	text := msg
@@ -279,15 +290,25 @@ func menuItems() []menuet.MenuItem {
 	return items
 }
 
+// Run owns startup ordering: publish policy and initialize native notifications
+// before opening IPC. The config watcher follows menuet's shutdown context.
 func Run(c *config.Config) {
-	cfg = c
-	if cfg.SystemNotifications {
-		C.setupNotificationDelegate()
-		C.requestNotificationAuth()
-	}
+	liveConfig.apply(c)
 	app := menuet.App()
 	app.SetMenuState(&menuet.MenuState{Title: "🔔"})
 	app.Children = menuItems
 	app.Label = "com.nickhudkins.mac-notify"
+	wg, ctx := app.GracefulShutdownHandles()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		liveConfig.watch(ctx, config.NewWatcher(config.Path()))
+	}()
+	go func() {
+		if err := ipc.ListenAndServe(HandleRequest); err != nil {
+			fmt.Fprintf(os.Stderr, "ipc server error: %v\n", err)
+			os.Exit(1)
+		}
+	}()
 	app.RunApplication()
 }
