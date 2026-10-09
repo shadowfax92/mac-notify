@@ -17,6 +17,7 @@ static NSTimeInterval now(void) { return NSProcessInfo.processInfo.systemUptime;
 - (id)attribute:(CFStringRef)name of:(id)element;
 - (id)find:(NSString *)identifier in:(id)element depth:(NSUInteger)depth;
 - (id)panel:(id)center;
+- (BOOL)emptyHistory:(id)panel;
 - (BOOL)perform:(NSString *)action on:(id)element;
 - (void)dismissals:(id)element into:(NSMutableArray *)result depth:(NSUInteger)depth;
 @end
@@ -72,8 +73,29 @@ static NSTimeInterval now(void) { return NSProcessInfo.processInfo.systemUptime;
 - (BOOL)perform:(NSString *)action on:(id)element {
     AXError status = AXUIElementPerformAction(ax(element), (__bridge CFStringRef)action);
     if (status == kAXErrorSuccess || status == kAXErrorInvalidUIElement) return YES;
-    self.error = [NSString stringWithFormat:@"Accessibility could not dismiss notifications (error %d)", status];
+    self.error = [NSString stringWithFormat:@"Accessibility could not perform a Notification Center action (error %d)", status];
     return NO;
+}
+
+- (BOOL)emptyHistory:(id)panel {
+    // On macOS 26 an empty history is an anonymous, childless AXGroup before
+    // the widgets and footer controls. A missing list identifier alone could
+    // instead mean loading or an incompatible layout, so verify this whole
+    // observed empty-state shape. AXElementBusy is not exposed by this host.
+    self.visited = 0;
+    id editor = [self find:@"widget-editor-button" in:panel depth:0];
+    id scroll = editor ? [self attribute:kAXParentAttribute of:editor] : nil;
+    if (!scroll) return NO;
+    if (![[self attribute:kAXRoleAttribute of:scroll] isEqual:@"AXScrollArea"]) return NO;
+    NSArray *children = [self attribute:kAXChildrenAttribute of:scroll];
+    if (children.count != 4 || ![children[2] isEqual:editor]) return NO;
+    id history = children[0];
+    if (![[self attribute:kAXRoleAttribute of:history] isEqual:@"AXGroup"] ||
+        [self attribute:kAXIdentifierAttribute of:history] != nil ||
+        ![[self attribute:kAXRoleAttribute of:children[1]] isEqual:@"AXOpaqueProviderGroup"] ||
+        ![[self attribute:kAXIdentifierAttribute of:children[3]] isEqual:@"xmark"]) return NO;
+    NSArray *items = [self attribute:kAXChildrenAttribute of:history];
+    return items != nil && items.count == 0;
 }
 
 - (void)dismissals:(id)element into:(NSMutableArray *)result depth:(NSUInteger)depth {
@@ -132,24 +154,26 @@ static NSString *clearVisibleNotifications(void) {
     if (!center) return @"Notification Center is not running";
     BOOL wasOpen = [session panel:center] != nil;
     id clock = nil;
-    BOOL opened = NO;
+    BOOL openingAttempted = NO;
+    BOOL observedPanel = wasOpen;
     if (!wasOpen && !session.error) {
         id controlCenter = application(@"com.apple.controlcenter");
         if (controlCenter) clock = [session find:@"com.apple.menuextra.clock" in:controlCenter depth:0];
         if (!clock) return session.error ?: @"could not find the menu-bar clock; this macOS Accessibility layout is unsupported";
-        opened = [session perform:(__bridge NSString *)kAXPressAction on:clock];
+        // AX actions may still execute after kAXErrorCannotComplete. Cleanup
+        // must reconcile visibility after every attempt, not just an ACK.
+        openingAttempted = YES;
+        [session perform:(__bridge NSString *)kAXPressAction on:clock];
     }
 
-    // Window creation precedes history population. Waiting only for the window
-    // can mistake a loading panel for an empty one (observed on macOS 26).
     NSTimeInterval openDeadline = now() + 2;
     id panel = nil;
     while (!session.error && !(panel = [session panel:center]) && now() < openDeadline) usleep(50000);
     if (!panel && !session.error) session.error = @"Notification Center did not open";
-    if (opened && panel) usleep(600000);
+    if (panel) observedPanel = YES;
 
     NSMutableSet *attempted = [NSMutableSet set];
-    NSUInteger emptySnapshots = 0;
+    NSTimeInterval emptySince = 0;
     while (!session.error) {
         panel = [session panel:center];
         if (!panel) {
@@ -159,10 +183,19 @@ static NSString *clearVisibleNotifications(void) {
         session.visited = 0;
         id list = [session find:@"AXNotificationListItems" in:panel depth:0];
         NSArray *children = list ? [session attribute:kAXChildrenAttribute of:list] : nil;
-        if (!list || children.count == 0) {
-            if (++emptySnapshots >= 3) break;
+        BOOL knownEmpty = list ? children != nil && children.count == 0 : [session emptyHistory:panel];
+        if (knownEmpty) {
+            // The history host has no explicit readiness flag. Require a quiet
+            // second in the recognized empty state so an opening/layout
+            // transition cannot be accepted as a single empty snapshot.
+            if (emptySince == 0) emptySince = now();
+            if (now() - emptySince >= 1) break;
+        } else if (!list) {
+            emptySince = 0;
+            // Unknown history remains unresolved until the operation deadline;
+            // it must never be counted as empty or reported as success.
         } else {
-            emptySnapshots = 0;
+            emptySince = 0;
             NSMutableArray *dismissals = [NSMutableArray array];
             session.visited = 0;
             [session dismissals:list into:dismissals depth:0];
@@ -183,11 +216,21 @@ static NSString *clearVisibleNotifications(void) {
         usleep(150000);
     }
 
-    if (opened) {
+    if (openingAttempted) {
         MNClearSession *cleanup = [MNClearSession new];
         cleanup.deadline = now() + 2;
-        if ([cleanup panel:center]) {
+        id visible = [cleanup panel:center];
+        // A timed-out opening can arrive later. If no panel was ever observed,
+        // spend the independent cleanup budget watching for that delayed open.
+        while (!cleanup.error && !visible && !observedPanel && now() < cleanup.deadline) {
+            usleep(50000);
+            visible = [cleanup panel:center];
+        }
+        if (visible && !cleanup.error) {
             [cleanup perform:(__bridge NSString *)kAXPressAction on:clock];
+            // A closing action timeout is ambiguous too: observed disappearance
+            // confirms restoration even when the action acknowledgment failed.
+            cleanup.error = nil;
             while (!cleanup.error && [cleanup panel:center]) usleep(50000);
         }
         if (cleanup.error) {
@@ -213,6 +256,8 @@ int mnClearNotifications(char **error) {
             return MNClearPermissionDenied;
         }
         AXUIElementRef system = AXUIElementCreateSystemWide();
+        // The system-wide AX object sets a timeout for this client process,
+        // rather than changing Notification Center or any global OS setting.
         AXUIElementSetMessagingTimeout(system, 0.25);
         NSString *failure = clearVisibleNotifications();
         AXUIElementSetMessagingTimeout(system, 0);
