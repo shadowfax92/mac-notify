@@ -71,6 +71,7 @@ mac-notify send "msg" -b            # shorthand for --blocker
 mac-notify list                # show current messages
 mac-notify clear               # clear messages and macOS Notification Center
 mac-notify status              # check if daemon is running
+mac-notify restart             # restart the installed launchd daemon
 mac-notify install             # install launchd service
 mac-notify uninstall           # remove launchd service and stop daemon
 mac-notify daemon              # run daemon in foreground (for debugging)
@@ -153,6 +154,25 @@ overlay_timeout: 5
 | `overlay_notifications` | `true` | Show floating terminal-style overlay popup |
 | `menu_flash` | `true` | Flash message text in menu bar for 2s |
 | `overlay_timeout` | `5` | Overlay auto-dismiss timeout in seconds |
+
+Edits to these four settings apply automatically within about **2 seconds**,
+without restarting the daemon. This includes editor saves that replace the file
+by renaming. Enabling `system_notifications` initializes native notifications
+and requests authorization once per daemon session; disabling it stops new
+native posts and leaves existing notifications in place. New sends use the new
+settings; an overlay or menu flash already on screen finishes normally.
+
+An invalid edit keeps the last valid config. `mac-notify status` shows the active
+settings and the reload error, which clears after a valid save. Errors are also
+logged once per transition in `~/Library/Logs/mac-notify.log` for the installed
+daemon (or stderr when running `mac-notify daemon`). A temporarily missing file
+keeps the active settings and is never recreated by the reload watcher. Existing
+config files, including their comments, are never rewritten by reloads.
+
+As a fallback, run `mac-notify restart`. It restarts the installed launchd service
+with `launchctl kickstart -k gui/<uid>/com.mac-notify.daemon` and reports an error
+if the service is not installed or loaded. Foreground debug daemons are restarted
+by stopping and rerunning `mac-notify daemon`.
 
 ### Send Formatting
 

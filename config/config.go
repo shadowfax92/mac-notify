@@ -2,12 +2,15 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
 
+// Config holds startup defaults and the user's notification policy. Daemon
+// reloads publish a whole value; send formatting is still loaded by each CLI send.
 type Config struct {
 	SystemNotifications  bool        `yaml:"system_notifications"`
 	OverlayNotifications bool        `yaml:"overlay_notifications"`
@@ -42,11 +45,10 @@ func Path() string {
 }
 
 func Load() (*Config, error) {
-	cfg := Default()
-
-	data, err := os.ReadFile(Path())
+	cfg, err := LoadFrom(Path())
 	if err != nil {
 		if os.IsNotExist(err) {
+			cfg = Default()
 			if err := Save(cfg); err != nil {
 				return nil, fmt.Errorf("creating default config: %w", err)
 			}
@@ -54,9 +56,25 @@ func Load() (*Config, error) {
 		}
 		return nil, err
 	}
+	return cfg, nil
+}
+
+// LoadFrom only reads: an editor may temporarily remove the path while saving.
+// Only startup Load may create defaults; a reload must never replace a user's file.
+func LoadFrom(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	cfg := Default()
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+	// YAML accepts NaN/Inf, but neither JSON status nor native timer deadlines
+	// can represent them. Nonpositive finite values keep the existing fallback.
+	if math.IsNaN(cfg.OverlayTimeout) || math.IsInf(cfg.OverlayTimeout, 0) {
+		return nil, fmt.Errorf("overlay_timeout must be a finite number")
 	}
 	return cfg, nil
 }
