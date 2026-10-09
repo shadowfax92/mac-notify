@@ -9,6 +9,7 @@
 static NSTimeInterval tick;
 static BOOL visible, hasNotification;
 static NSTimeInterval pendingOpen;
+static NSTimeInterval layoutReady;
 static int presses;
 static NSString *scenario;
 
@@ -55,7 +56,7 @@ static AXError fixtureAttribute(AXUIElementRef element, CFStringRef attribute, C
     if ([node isEqual:@"control"]) attributes = @{@"AXRole": @"AXApplication", @"AXChildren": @[@"clock"]};
     if ([node isEqual:@"clock"]) attributes = @{@"AXRole": @"AXMenuBarItem", @"AXIdentifier": @"com.apple.menuextra.clock", @"AXChildren": @[]};
     if ([node isEqual:@"panel"]) attributes = @{@"AXRole": @"AXWindow", @"AXSubrole": @"AXSystemDialog", @"AXChildren": @[@"scroll"]};
-    if ([node isEqual:@"scroll"]) attributes = @{@"AXRole": @"AXScrollArea", @"AXChildren": @[@"history", @"widgets", @"editor", @"xmark"]};
+    if ([node isEqual:@"scroll"]) attributes = @{@"AXRole": @"AXScrollArea", @"AXChildren": tick < layoutReady ? @[@"history", @"widgets", @"xmark"] : @[@"history", @"widgets", @"editor", @"xmark"]};
     if ([node isEqual:@"history"]) {
         NSMutableDictionary *history = [@{@"AXRole": @"AXGroup", @"AXChildren": hasNotification ? @[@"notification"] : @[]} mutableCopy];
         if ([scenario isEqual:@"unknown-history"]) history[@"AXIdentifier"] = @"renamed-history";
@@ -80,7 +81,14 @@ static AXError fixtureActionDescription(AXUIElementRef element, CFStringRef acti
 }
 static AXError fixturePerform(AXUIElementRef element, CFStringRef action) {
     NSString *node = (__bridge NSString *)element;
-    if ([node isEqual:@"notification"]) { hasNotification = NO; return kAXErrorSuccess; }
+    if ([node isEqual:@"notification"]) {
+        hasNotification = NO;
+        // Dismissal can briefly rebuild the panel's AX subtree. A permanently
+        // closed panel must still fail rather than imply an empty history.
+        if ([scenario isEqual:@"transient-panel"]) layoutReady = tick + .3;
+        if ([scenario isEqual:@"closed-panel"]) visible = NO;
+        return kAXErrorSuccess;
+    }
     if (![node isEqual:@"clock"]) return kAXErrorActionUnsupported;
     presses++;
     if (!visible && [scenario isEqual:@"opening-timeout"]) {
@@ -108,13 +116,13 @@ static AXError fixturePerform(AXUIElementRef element, CFStringRef action) {
 int main(void) {
     @autoreleasepool {
         int failures = 0;
-        for (NSString *test in @[@"empty", @"dismiss", @"unknown-history", @"opening-timeout", @"closing-timeout"]) {
-            scenario = test; tick = 100; visible = NO; presses = 0; pendingOpen = 0;
-            hasNotification = [test isEqual:@"dismiss"] || [test isEqual:@"unknown-history"];
+        for (NSString *test in @[@"empty", @"dismiss", @"unknown-history", @"opening-timeout", @"closing-timeout", @"transient-panel", @"closed-panel"]) {
+            scenario = test; tick = 100; visible = NO; presses = 0; pendingOpen = 0; layoutReady = 0;
+            hasNotification = [test isEqual:@"dismiss"] || [test isEqual:@"unknown-history"] || [test isEqual:@"transient-panel"] || [test isEqual:@"closed-panel"];
             char *error = NULL;
             int status = mnClearNotifications(&error);
-            BOOL wantError = [test isEqual:@"unknown-history"] || [test isEqual:@"opening-timeout"];
-            BOOL pass = (status != MNClearOK) == wantError && !visible && !pendingOpen && presses == 2;
+            BOOL wantError = [test isEqual:@"unknown-history"] || [test isEqual:@"opening-timeout"] || [test isEqual:@"closed-panel"];
+            BOOL pass = (status != MNClearOK) == wantError && !visible && !pendingOpen && presses == ([test isEqual:@"closed-panel"] ? 1 : 2);
             if ([test isEqual:@"dismiss"]) pass = pass && !hasNotification;
             if ([test isEqual:@"unknown-history"]) pass = pass && hasNotification;
             if (tick - 100 > 10) pass = NO;

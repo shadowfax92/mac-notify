@@ -174,12 +174,24 @@ static NSString *clearVisibleNotifications(void) {
 
     NSMutableSet *attempted = [NSMutableSet set];
     NSTimeInterval emptySince = 0;
+    NSTimeInterval panelMissingSince = 0;
     while (!session.error) {
         panel = [session panel:center];
         if (!panel) {
-            if (!session.error) session.error = @"Notification Center closed before clearing finished";
-            break;
+            if (session.error) break;
+            // Dismissing a group may briefly rebuild the identifying controls.
+            // Retry that transition without treating disappearance as empty;
+            // a panel that stays closed still cannot establish success.
+            emptySince = 0;
+            if (panelMissingSince == 0) panelMissingSince = now();
+            if (now() - panelMissingSince >= .5) {
+                session.error = @"Notification Center closed before clearing finished";
+                break;
+            }
+            usleep(50000);
+            continue;
         }
+        panelMissingSince = 0;
         session.visited = 0;
         id list = [session find:@"AXNotificationListItems" in:panel depth:0];
         NSArray *children = list ? [session attribute:kAXChildrenAttribute of:list] : nil;
@@ -222,7 +234,9 @@ static NSString *clearVisibleNotifications(void) {
         id visible = [cleanup panel:center];
         // A timed-out opening can arrive later. If no panel was ever observed,
         // spend the independent cleanup budget watching for that delayed open.
-        while (!cleanup.error && !visible && !observedPanel && now() < cleanup.deadline) {
+        // Otherwise allow a brief AX rebuild before assuming it is closed.
+        NSTimeInterval visibilityDeadline = observedPanel ? MIN(cleanup.deadline, now() + .5) : cleanup.deadline;
+        while (!cleanup.error && !visible && now() < visibilityDeadline) {
             usleep(50000);
             visible = [cleanup panel:center];
         }
