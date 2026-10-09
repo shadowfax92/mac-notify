@@ -39,8 +39,9 @@ Both `make install` and `make reinstall` first ask the old daemon to clear its
 messages and native notifications before replacing or stopping it. This prevents
 notifications from being orphaned when ad-hoc signing changes the app's notification
 source. Cleanup is best-effort: a missing app or stopped daemon does not block
-installation. Notifications already orphaned by older installs must be dismissed
-manually in Notification Center.
+installation. Notifications already orphaned by older installs can be dismissed
+manually in Notification Center, or with `mac-notify clear --all` if they appear
+there.
 
 ## Uninstall
 
@@ -58,6 +59,7 @@ mac-notify send -b "blocked — waiting for approval"
 mac-notify send "$MESSAGE"
 mac-notify list
 mac-notify clear
+mac-notify clear --all
 ```
 
 ## Commands
@@ -69,7 +71,9 @@ mac-notify send "msg" --id build    # upsert by ID
 mac-notify send "msg" --blocker     # persistent terminal blocker (dismiss with ✕)
 mac-notify send "msg" -b            # shorthand for --blocker
 mac-notify list                # show current messages
-mac-notify clear               # clear messages and macOS Notification Center
+mac-notify clear               # clear mac-notify messages, blockers, and native notifications
+mac-notify clear --all         # also clear every app's visible Notification Center notifications
+mac-notify clear -a            # shorthand for --all
 mac-notify status              # check if daemon is running
 mac-notify restart             # restart the installed launchd daemon
 mac-notify install             # install launchd service
@@ -84,6 +88,34 @@ mac-notify daemon              # run daemon in foreground (for debugging)
 | `--source` | `send` | Origin label (e.g. `ci`, `build`, `deploy`) |
 | `--id` | `send` | Message ID for upsert — replaces existing message with same ID |
 | `-b`, `--blocker` | `send` | Show a persistent dark terminal-style panel with a red **■ BLOCKED** strip in the top-right stack until dismissed with ✕ |
+| `-a`, `--all` | `clear` | Also clear every app's notifications shown in Notification Center; requires Accessibility permission |
+
+### Clear every app's notifications
+
+`mac-notify clear --all` (or `mn clear -a` with the fish shortcut) first performs
+the normal mac-notify cleanup, then uses the public macOS Accessibility API to
+dismiss everything Notification Center shows. Plain `clear` keeps its existing
+behavior and needs no Accessibility permission.
+
+Grant **System Settings → Privacy & Security → Accessibility → your terminal
+app**. For example, enable **Ghostty** when running from Ghostty. The Accessibility
+work runs in the CLI and inherits the terminal's permission, so reinstalling the
+ad-hoc-signed daemon does not require a new grant. If permission is missing, the
+command names the terminal and settings path, requests macOS's permission prompt,
+and exits with an error immediately. For an unfamiliar launcher, grant the app
+named in that system prompt.
+
+Notification Center may visibly open for about 1–3 seconds. The command closes it
+again if it started closed, leaves it open if it started open, and does not
+activate another app. The normal mac-notify cleanup has already happened if
+the subsequent Accessibility step fails; failures and timeouts return an error.
+
+This clears visible notifications, including ones from other apps. It cannot
+reach stale records that exist only in macOS's database and never appear in the
+Notification Center UI. It does not edit that database, restart system processes,
+or cancel other apps' future scheduled notifications. The Accessibility layout
+and English dismiss controls were tested on macOS 26; incompatible layouts or
+controls return an error.
 
 ## Menu Bar
 
